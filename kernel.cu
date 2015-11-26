@@ -559,7 +559,6 @@ cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
 {
 	int  GPU_N, device_num_used;
 	cudaGetDeviceCount(&GPU_N);
-	printf("CUDA-capable device count: %i\n", GPU_N);
 
 	//OSU Workstation : 0 = Tesla, 1 = Titan1, 2 = Titan2
 	//ASU Workstation: 0 = Tesla, 1 = Quadro (don't use)
@@ -569,22 +568,13 @@ cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
 		fprintf(stderr, "cudaSetDevice failed!");
 
 	// Allocate Page-locked (Pinned) HOST-memory
-	float* h_I_prime_org;					cudaMallocHost(&h_I_prime_org, REAL_SIZE);
-	float* h_I_prime_err;					cudaMallocHost(&h_I_prime_err, REAL_SIZE);
 	float* h_img_ref_float;				cudaMallocHost(&h_img_ref_float, REAL_SIZE);
 	float* h_img_dst_float;				cudaMallocHost(&h_img_dst_float, REAL_SIZE);
 	cufftComplex* h_ref_cufft;		cudaMallocHost(&h_ref_cufft, COMPLEX_SIZE);
 	cufftComplex* h_dst_cufft;		cudaMallocHost(&h_dst_cufft, COMPLEX_SIZE);
-	float* h_reflut;							cudaMallocHost(&h_reflut, REAL_SIZE);
-	float* h_lmse;								cudaMallocHost(&h_lmse, REAL_SIZE);
-	float* h_zeta;								cudaMallocHost(&h_zeta, REAL_SIZE);
 	float* h_eta;									cudaMallocHost(&h_eta, REAL_SIZE);
 	float* h_product;							cudaMallocHost(&h_product, REAL_SIZE);
 
-	// Statistical matrices for hi-index:
-	float* h_outStd;			cudaMallocHost(&h_outStd, REAL_SIZE);
-	float* h_outStdMod;		cudaMallocHost(&h_outStdMod, REAL_SIZE);
-	float* h_outMean;			cudaMallocHost(&h_outMean, REAL_SIZE);
 
 	// Allocate DEVICE memory -- Appearance (Hi-Index)
 	float* d_img_ref_float;		cudaMalloc((void **)&d_img_ref_float, REAL_SIZE);
@@ -668,8 +658,6 @@ cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
 		// Begin NVTX Marker:
 		nvtxRangePushA("CUDA-MAD");
 
-		// Begin NVTX Marker:
-		nvtxRangePushA("CSF HOST code");
 
 		// Build CSF on Device
 		yPlane_CSF_kernel << < 1, 1, 0, stream[1] >> >(d_yPlane);
@@ -677,75 +665,47 @@ cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
 		build_CSF_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_CSF, d_yPlane, d_xPlane);
 		fftShift_kernel << < fftShift_grid_size, fftShift_block_size, 0, stream[1] >> >(d_CSF);
 
-		// Begin NVTX Marker:
-		nvtxRangePushA("Linearize on HOST");
+
+		
+		
 
 		// Linearize REAL image data and copy data from HOST -> DEVICE
+		nvtxRangePushA("Linearize ref");// Begin NVTX Marker for Linearize ref
 		linearize_and_cast_from_Mat_to_float(mat_ref, h_img_ref_float);
-		linearize_and_cast_from_Mat_to_float(mat_dst, h_img_dst_float);
-
-		// End NVTX Marker for CSF Filtering:
-		nvtxRangePop();
-
-		//cudaMemcpyAsync(d_img_ref_float, h_img_ref_float, REAL_SIZE, cudaMemcpyDeviceToHost, stream[1]); //DEVICE -> HOST
-		cudaMemcpy(d_img_ref_float, h_img_ref_float, REAL_SIZE, cudaMemcpyDeviceToHost); //DEVICE -> HOST
-		//cudaMemcpyAsync(d_img_dst_float, h_img_dst_float, REAL_SIZE, cudaMemcpyDeviceToHost, stream[1]); //DEVICE -> HOST
-		cudaMemcpy(d_img_dst_float, h_img_dst_float, REAL_SIZE, cudaMemcpyDeviceToHost); //DEVICE -> HOST
-
-		// Map to luminance domain
+		nvtxRangePop();		// End NVTX Marker for Linearize ref
+		
+		cudaMemcpyAsync(d_img_ref_float, h_img_ref_float, REAL_SIZE, cudaMemcpyDeviceToHost, stream[1]); //DEVICE -> HOST
+		//cudaMemcpy(d_img_ref_float, h_img_ref_float, REAL_SIZE, cudaMemcpyDeviceToHost); //DEVICE -> HOST
 		map_to_luminance_domain_kernel1 << < gridSize, blockSize, 0, stream[1] >> >(d_img_ref_float, d_L_hat_ref);
-		map_to_luminance_domain_kernel1 << < gridSize, blockSize, 0, stream[1] >> >(d_img_dst_float, d_L_hat_dst);
-
-		// CAN MOVE THIS ANYWHERE!!!!!
-		// Launch Kernel to take the square of the differnce of the original image 
-		square_of_difference_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_img_ref_float, d_img_dst_float, d_reflut);
-
-		// Filter L_hat_dst
 		R2C_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref, d_L_hat_ref_complex);
-		R2C_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst, d_L_hat_dst_complex);
-
-		// Exectute "in-place" C2C 2D-FFT
 		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_ref_complex, (cufftComplex *)d_L_hat_ref_complex, CUFFT_FORWARD);
-		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_dst_complex, (cufftComplex *)d_L_hat_dst_complex, CUFFT_FORWARD);
-
-		// Filter images
 		pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref_complex, d_CSF, d_L_hat_ref_complex);
-		pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst_complex, d_CSF, d_L_hat_dst_complex);
-
-		// LMSE - CAN MOVE ALMOST ANYWHERE
-		LMSE_map_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_reflut, d_lmse);
-
-		// Exectute "In-Place" C2C 2D-FFT^-1
 		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_ref_complex, (cufftComplex *)d_L_hat_ref_complex, CUFFT_INVERSE);
-		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_dst_complex, (cufftComplex *)d_L_hat_dst_complex, CUFFT_INVERSE);
-
-		// Take Real Part
 		real_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref_complex, d_I_prime_org);
+
+		nvtxRangePushA("Linearize dst");// Begin NVTX Marker for Linearize ref
+		linearize_and_cast_from_Mat_to_float(mat_dst, h_img_dst_float);
+		nvtxRangePop();		// End NVTX Marker for Linearize ref
+
+		cudaMemcpyAsync(d_img_dst_float, h_img_dst_float, REAL_SIZE, cudaMemcpyDeviceToHost, stream[1]); //DEVICE -> HOST
+		//cudaMemcpy(d_img_dst_float, h_img_dst_float, REAL_SIZE, cudaMemcpyDeviceToHost); //DEVICE -> HOST
+		map_to_luminance_domain_kernel1 << < gridSize, blockSize, 0, stream[1] >> >(d_img_dst_float, d_L_hat_dst);
+		R2C_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst, d_L_hat_dst_complex);
+		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_dst_complex, (cufftComplex *)d_L_hat_dst_complex, CUFFT_FORWARD);
+		pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst_complex, d_CSF, d_L_hat_dst_complex);
+		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_dst_complex, (cufftComplex *)d_L_hat_dst_complex, CUFFT_INVERSE);
 		real_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst_complex, d_I_prime_dst);
 
-		// Compute error image:
+
+		// Detection Statistics
+		square_of_difference_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_img_ref_float, d_img_dst_float, d_reflut);
+		LMSE_map_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_reflut, d_lmse);
 		error_img_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_I_prime_org, d_I_prime_dst, d_I_prime_err);
-
-		// End NVTX Marker for CSF Filtering:
-		nvtxRangePop();
-
-
-		// Begin NVTX Marker:
-		nvtxRangePushA("Hi-Stats HOST code");
-
-		//cudaDeviceSynchronize();
 		fast_hi_stats_kernel1 << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_I_prime_err, d_I_prime_org, d_outStd, d_outStdMod, d_outMean, d_img_ref_float, d_img_dst_float, d_TEMP);
 		fast_hi_stats_kernel2 << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_I_prime_err, d_I_prime_org, d_outStd, d_outStdMod, d_outMean, d_img_ref_float, d_img_dst_float, d_TEMP);
 		zeta_map_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_outMean, d_outStd, d_outStdMod, d_zeta);
-
-		// Product inside summation in MAD eq. 7
-		product_array_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_product, d_zeta, d_lmse);
+		product_array_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_product, d_zeta, d_lmse); // Product inside summation in MAD eq. 7
 		//cudaMemcpyAsync(h_product, d_product, REAL_SIZE, cudaMemcpyDeviceToHost, stream[1]); //DEVICE -> HOST
-
-		// End NVTX Marker for Hi-Stats Host Code:
-		nvtxRangePop();
-
-
 
 		//- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
@@ -753,16 +713,11 @@ cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
 
 		//- - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
-		// Begin NVTX Marker:
-		nvtxRangePushA("Host code filter-bank & lo-stats");
-
-
 		// Exectute "in-place" C2C 2D-DFT of REF (used in the LEFT side of the Gabor Filterbank)
 		R2C_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_img_ref_float, d_ref_cufft);
 		R2C_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_img_dst_float, d_dst_cufft);
 		cufftExecC2C(fftPlan[1], (cufftComplex *)d_ref_cufft, (cufftComplex *)d_ref_cufft, CUFFT_FORWARD);
 		cufftExecC2C(fftPlan[1], (cufftComplex *)d_dst_cufft, (cufftComplex *)d_dst_cufft, CUFFT_FORWARD);
-
 
 		float scale[5] = { 0.5, 0.75, 1, 5, 6 };
 		for (int o = 0; o < 4; o++)
@@ -794,29 +749,26 @@ cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
 		//cudaMemcpyAsync(h_eta, d_eta, REAL_SIZE, cudaMemcpyDeviceToHost, stream[1]); //DEVICE -> HOST
 
 
-		// End NVTX Marker for Filterbank and lo-stats:
-		nvtxRangePop();
-
-		// Begin NVTX Marker:
-		nvtxRangePushA("CPU Map Collapse including SYNCHRONOUS cudamemchpys");
+		// Host Code waits here on memcpy
+		cudaMemcpy(h_product, d_product, REAL_SIZE, cudaMemcpyDeviceToHost); //DEVICE -> HOST
 
 		// Collapse the visibility-weighted local MSE via L2-norm (MAD eq. 7)
-		cudaMemcpy(h_product, d_product, REAL_SIZE, cudaMemcpyDeviceToHost); //DEVICE -> HOST
+		nvtxRangePushA("CPU Detection Map Collapse");
 		float d_detect = reduce_sum_of_squares_2D_CPU(h_product, BLOCK_SIZE, N - BLOCK_SIZE - 1);
 		d_detect = sqrt(d_detect) / sqrt(229441.0f);   // Number of itterations in loop: counter = 229441
 		d_detect = d_detect * 200;
+		nvtxRangePop();
 
 		cudaMemcpy(h_eta, d_eta, REAL_SIZE, cudaMemcpyDeviceToHost); //DEVICE -> HOST
+		nvtxRangePushA("CPU Appearance Map Collapse");
 		float d_appear = reduce_sum_of_squares_2D_CPU(h_eta, BLOCK_SIZE, N - BLOCK_SIZE);
 		d_appear = sqrt(d_appear) / 479.0f;
+		nvtxRangePop();
 
 		float beta1 = 0.467;
 		float beta2 = 0.130;
 		float alpha = 1 / (1 + beta1*pow(d_detect, beta2));
 		float MAD = pow(d_detect, alpha)*pow(d_appear, 1 - alpha);
-
-		// End NVTX Marker for CPU Map Collapse including SYNCHRONOUS cudamemchpys:
-		nvtxRangePop();
 
 		// End NVTX Marker for CUDA-MAD:
 		nvtxRangePop();
