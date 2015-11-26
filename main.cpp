@@ -51,35 +51,35 @@ int do_main()
 			else
 				//printf("Exit with zero errors...\n");
 			{
-				printf("Execution number %d\n", image_index);
+				//printf("Execution number %d\n", image_index);
 #ifdef CSF_FILTER
 				csf_filter_Gpu_aevrage += image_array[image_index - 1].csf_filter_Gpu;
-				printf("image_array[%d].csf_filter_Gpu = %lf\n", image_index, image_array[image_index - 1].csf_filter_Gpu);
+				//printf("image_array[%d].csf_filter_Gpu = %lf\n", image_index, image_array[image_index - 1].csf_filter_Gpu);
 #endif
 #ifdef LOW_STATS
 				appearence_statistic_Gpu_average += image_array[image_index - 1].appearence_statistic_Gpu;
-				printf("image_array[%d].appearence_statistic_Gpu = %lf\n", image_index, image_array[image_index - 1].appearence_statistic_Gpu);
+				//printf("image_array[%d].appearence_statistic_Gpu = %lf\n", image_index, image_array[image_index - 1].appearence_statistic_Gpu);
 #endif
 #ifdef LOG_GABOR
 				detection_gabor_filterbank_GPU_average += image_array[image_index - 1].detection_gabor_filterbank_GPU;
-				printf("image_array[%d].detection_gabor_filterbank_GPU = %lf\n", image_index, image_array[image_index - 1].detection_gabor_filterbank_GPU);
+				//printf("image_array[%d].detection_gabor_filterbank_GPU = %lf\n", image_index, image_array[image_index - 1].detection_gabor_filterbank_GPU);
 #endif
 #ifdef HI_STATS
 				detection_statistic_GPU_average += image_array[image_index - 1].detection_statistic_GPU;
-				printf("image_array[%d].detection_statistic_GPU = %lf\n", image_index, image_array[image_index - 1].detection_statistic_GPU);
+				//printf("image_array[%d].detection_statistic_GPU = %lf\n", image_index, image_array[image_index - 1].detection_statistic_GPU);
 #endif
 			}
 				
 		}
 	}
-	printf("*****************Average values as below ************************\n");
+	//printf("*****************Average values as below ************************\n");
 
-	printf("timing_sum_global = %lf\n", timing_sum_global / (2 * NUM_IMAGES));
-	printf("csf_filter_Gpu_aevrage = %lf\n",  csf_filter_Gpu_aevrage / (2 * NUM_IMAGES));
-	printf("hi_statistic_Gpu_average = %lf\n", appearence_statistic_Gpu_average / (2 * NUM_IMAGES));
-	printf("gabor_filterbank_GPU_average = %lf\n", detection_gabor_filterbank_GPU_average / (2 * NUM_IMAGES));
-	printf("lo_statistic_GPU_average =   %lf\n", detection_statistic_GPU_average / (2 * NUM_IMAGES));
-	printf("timing_sum_combine_mad = %lf\n", timing_sum_combine_mad / (2 * NUM_IMAGES));
+	//printf("timing_sum_global = %lf\n", timing_sum_global / (2 * NUM_IMAGES));
+	//printf("csf_filter_Gpu_aevrage = %lf\n",  csf_filter_Gpu_aevrage / (2 * NUM_IMAGES));
+	//printf("hi_statistic_Gpu_average = %lf\n", appearence_statistic_Gpu_average / (2 * NUM_IMAGES));
+	//printf("gabor_filterbank_GPU_average = %lf\n", detection_gabor_filterbank_GPU_average / (2 * NUM_IMAGES));
+	//printf("lo_statistic_GPU_average =   %lf\n", detection_statistic_GPU_average / (2 * NUM_IMAGES));
+	//printf("timing_sum_combine_mad = %lf\n", timing_sum_combine_mad / (2 * NUM_IMAGES));
 	return 0;
 }
 //=============================================================================
