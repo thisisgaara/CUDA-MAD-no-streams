@@ -1,0 +1,1 @@
+# CUDA-MAD-no-streams
