@@ -10,7 +10,7 @@
 #define REAL_SIZE			sizeof(float)* IMG_SIZE
 #define COMPLEX_SIZE	sizeof(cufftComplex)* IMG_SIZE
 //=============================================================================
-__global__ void buildGabor(float* logGabor, const int orientIdx, const int scaleIdx)
+__global__ void A1_build_gabor(float* logGabor, const int orientIdx, const int scaleIdx)
 {
 	const float nOrient = 4.0f;
 	const float nScale = 5.0f;
@@ -25,29 +25,126 @@ __global__ void buildGabor(float* logGabor, const int orientIdx, const int scale
 	//for (int i = 0; i < N; i++)
 	int i = threadIdx.x + blockDim.x * blockIdx.x;
 	int j = threadIdx.y + blockDim.y * blockIdx.y;
-	int lin_idx = i * N + j;
 
-	// REDUCE GLOBAL MEMORY TRAFIC BY COMPUTING EACH INDIVIDUAL MATRIX VALUE IN EACH THREAD
-	float Y = -1 + i*0.003906f;
-	float X = -1 + j*0.003906f;
-	float sin_theta_temp = sin(atan2f(-Y, X));
-	float cos_theta_temp = cos(atan2f(-Y, X));
-	float radius_temp = sqrt(X * X + Y * Y);
+	int lin_idx = 0;
 
-	float ds = sin_theta_temp * cos(angl) - cos_theta_temp * sin(angl); // Difference in sin
-	float dc = cos_theta_temp * cos(angl) + sin_theta_temp * sin(angl); // Difference in cos
-	float diffTheta = abs(atan2(ds, dc));																			// Absolute angular distance
-	float spread = exp((-diffTheta * diffTheta) / (2 * thetaSigma * thetaSigma)); // Calculate the angular filter component.
-	float gabor = exp((-(log(radius_temp / rfo)) * (log(radius_temp / rfo)) / (2 * log(0.55f) * log(0.55f))));
-	logGabor[lin_idx] = spread * gabor;
+	//int i = threadIdx.x + blockIdx.x * blockDim.x;
+	if (i < 256)
+	{
+		//int j = threadIdx.y + blockIdx.y * blockDim.y;
+		if (j < 256)
+		{
+			//float temp = logGabor[i * 512 + j];
+			//logGabor[i * 512 + j] = logGabor[(i + 256) * 512 + (j + 256)];
+			lin_idx = i * N + j;
+			i = i + 256;
+			j = j + 256;
 
-	// WHY TEST ALL VALUES?
-	// EXECUTE KERNEL THEN ONLY MODIFY THIS SINGLE VALUE IN ANOTHER KERNEL
-	if (lin_idx == 131328)// lin_idx = (N^2 + N)/2 = 131328 (N=512)
-		logGabor[lin_idx] = 0.0f;	//Get rid of the 0 radius value
+			// REDUCE GLOBAL MEMORY TRAFIC BY COMPUTING EACH INDIVIDUAL MATRIX VALUE IN EACH THREAD
+			float Y = -1 + i*0.003906f;
+			float X = -1 + j*0.003906f;
+			float sin_theta_temp = sin(atan2f(-Y, X));
+			float cos_theta_temp = cos(atan2f(-Y, X));
+			float radius_temp = sqrt(X * X + Y * Y);
+
+			float ds = sin_theta_temp * cos(angl) - cos_theta_temp * sin(angl); // Difference in sin
+			float dc = cos_theta_temp * cos(angl) + sin_theta_temp * sin(angl); // Difference in cos
+			float diffTheta = abs(atan2(ds, dc));																			// Absolute angular distance
+			float spread = exp((-diffTheta * diffTheta) / (2 * thetaSigma * thetaSigma)); // Calculate the angular filter component.
+			float gabor = exp((-(log(radius_temp / rfo)) * (log(radius_temp / rfo)) / (2 * log(0.55f) * log(0.55f))));
+			logGabor[lin_idx] = spread * gabor;
+
+			if (lin_idx == 131328)// lin_idx = (N^2 + N)/2 = 131328 (N=512)
+				logGabor[lin_idx] = 0.0f;	//Get rid of the 0 radius value
+
+			
+			//logGabor[(i + 256) * 512 + (j + 256)] = temp;
+
+			i = threadIdx.x + blockIdx.x * blockDim.x;
+			j = threadIdx.y + blockIdx.y * blockDim.y;
+			lin_idx = (i + 256) * 512 + (j + 256);
+			i = i;
+			j = j;
+
+			// REDUCE GLOBAL MEMORY TRAFIC BY COMPUTING EACH INDIVIDUAL MATRIX VALUE IN EACH THREAD
+			Y = -1 + i*0.003906f;
+			X = -1 + j*0.003906f;
+			sin_theta_temp = sin(atan2f(-Y, X));
+			cos_theta_temp = cos(atan2f(-Y, X));
+			radius_temp = sqrt(X * X + Y * Y);
+
+			ds = sin_theta_temp * cos(angl) - cos_theta_temp * sin(angl); // Difference in sin
+			dc = cos_theta_temp * cos(angl) + sin_theta_temp * sin(angl); // Difference in cos
+			diffTheta = abs(atan2(ds, dc));																			// Absolute angular distance
+			spread = exp((-diffTheta * diffTheta) / (2 * thetaSigma * thetaSigma)); // Calculate the angular filter component.
+			gabor = exp((-(log(radius_temp / rfo)) * (log(radius_temp / rfo)) / (2 * log(0.55f) * log(0.55f))));
+			logGabor[lin_idx] = spread * gabor;
+
+			if (lin_idx == 131328)// lin_idx = (N^2 + N)/2 = 131328 (N=512)
+				logGabor[lin_idx] = 0.0f;	//Get rid of the 0 radius value
+
+
+
+
+			//temp = logGabor[(i + 256) * 512 + j];
+			//logGabor[(i + 256) * 512 + j] = logGabor[i * 512 + (j + 256)];
+			i = threadIdx.x + blockIdx.x * blockDim.x;
+			j = threadIdx.y + blockIdx.y * blockDim.y;
+			lin_idx = (i + 256) * 512 + j;
+			i = i;
+			j = j + 256;
+			
+			// REDUCE GLOBAL MEMORY TRAFIC BY COMPUTING EACH INDIVIDUAL MATRIX VALUE IN EACH THREAD
+			Y = -1 + i*0.003906f;
+			X = -1 + j*0.003906f;
+			sin_theta_temp = sin(atan2f(-Y, X));
+			cos_theta_temp = cos(atan2f(-Y, X));
+			radius_temp = sqrt(X * X + Y * Y);
+
+			ds = sin_theta_temp * cos(angl) - cos_theta_temp * sin(angl); // Difference in sin
+			dc = cos_theta_temp * cos(angl) + sin_theta_temp * sin(angl); // Difference in cos
+			diffTheta = abs(atan2(ds, dc));																			// Absolute angular distance
+			spread = exp((-diffTheta * diffTheta) / (2 * thetaSigma * thetaSigma)); // Calculate the angular filter component.
+			gabor = exp((-(log(radius_temp / rfo)) * (log(radius_temp / rfo)) / (2 * log(0.55f) * log(0.55f))));
+			logGabor[lin_idx] = spread * gabor;
+
+			if (lin_idx == 131328)// lin_idx = (N^2 + N)/2 = 131328 (N=512)
+				logGabor[lin_idx] = 0.0f;	//Get rid of the 0 radius value
+			
+			
+			
+			
+			
+			
+			//logGabor[i * 512 + (j + 256)] = temp;
+			i = threadIdx.x + blockIdx.x * blockDim.x;
+			j = threadIdx.y + blockIdx.y * blockDim.y;
+			lin_idx = i * 512 + (j + 256);
+			i = i + 256;
+			j = j ;
+
+			// REDUCE GLOBAL MEMORY TRAFIC BY COMPUTING EACH INDIVIDUAL MATRIX VALUE IN EACH THREAD
+			Y = -1 + i*0.003906f;
+			X = -1 + j*0.003906f;
+			sin_theta_temp = sin(atan2f(-Y, X));
+			cos_theta_temp = cos(atan2f(-Y, X));
+			radius_temp = sqrt(X * X + Y * Y);
+
+			ds = sin_theta_temp * cos(angl) - cos_theta_temp * sin(angl); // Difference in sin
+			dc = cos_theta_temp * cos(angl) + sin_theta_temp * sin(angl); // Difference in cos
+			diffTheta = abs(atan2(ds, dc));																			// Absolute angular distance
+			spread = exp((-diffTheta * diffTheta) / (2 * thetaSigma * thetaSigma)); // Calculate the angular filter component.
+			gabor = exp((-(log(radius_temp / rfo)) * (log(radius_temp / rfo)) / (2 * log(0.55f) * log(0.55f))));
+			logGabor[lin_idx] = spread * gabor;
+
+			if (lin_idx == 131328)// lin_idx = (N^2 + N)/2 = 131328 (N=512)
+				logGabor[lin_idx] = 0.0f;	//Get rid of the 0 radius value
+		}
+	}
+
 }
 //=============================================================================
-__global__ void pointWise_complex_matrix_mult_kernel_2d(cufftComplex* img_spectrum, float* real_filter, cufftComplex* out)
+__global__ void A3_D3_pointWise_complex_matrix_mult_kernel_2d(cufftComplex* img_spectrum, float* real_filter, cufftComplex* out)
 {
 	// Grab indices
 	int index_x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -66,7 +163,8 @@ __global__ void pointWise_complex_matrix_mult_kernel_2d(cufftComplex* img_spectr
 	out[grid_index].y = real_filter[grid_index] * img_spectrum[grid_index].y;	//Im(out)
 }
 //=============================================================================
-__global__ void magnitude_kernel(cufftComplex* d_inverse_complex, float* d_inverse_mag)
+__global__ void A4_mag_kernel(cufftComplex* d_inverse_complex1, float* d_inverse_mag1,
+	cufftComplex* d_inverse_complex2, float* d_inverse_mag2)
 {
 	// Grab indices
 	int index_x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -77,14 +175,18 @@ __global__ void magnitude_kernel(cufftComplex* d_inverse_complex, float* d_inver
 	int grid_index = index_y * grid_width + index_x;
 
 	// Grab Real and Imaginary parts of d_inverse_complex
-	float a = d_inverse_complex[grid_index].x / float(IMG_SIZE);
-	float b = d_inverse_complex[grid_index].y / float(IMG_SIZE);
+	float a1 = d_inverse_complex1[grid_index].x / float(IMG_SIZE);
+	float b1 = d_inverse_complex1[grid_index].y / float(IMG_SIZE);
+
+	float a2 = d_inverse_complex2[grid_index].x / float(IMG_SIZE);
+	float b2 = d_inverse_complex2[grid_index].y / float(IMG_SIZE);
 
 	// Apply pythagorean formula (Euclidean L2-Norm)
-	d_inverse_mag[grid_index] = sqrt(a*a + b*b);
+	d_inverse_mag1[grid_index] = sqrt(a1*a1 + b1*b1);
+	d_inverse_mag2[grid_index] = sqrt(a2*a2 + b2*b2);
 }
 //=============================================================================
-__global__ void real_kernel(cufftComplex* complex_in, float* real_out)
+__global__ void D4_real_kernel(cufftComplex* complex_in, float* real_out)
 {
 	// Grab indices
 	int index_x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -137,7 +239,7 @@ __global__ void xPlane_CSF_kernel(float* xPlane)
 	}
 }
 //=============================================================================
-__global__ void map_to_luminance_domain_kernel1(float* float_img_in, float* L_hat)
+__global__ void D1_map_to_luminance_domain_kernel(float* float_img_in, float* L_hat)
 {
 	// Grab indices
 	int index_x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -151,22 +253,7 @@ __global__ void map_to_luminance_domain_kernel1(float* float_img_in, float* L_ha
 	L_hat[grid_index] = pow((0.02874f*float_img_in[grid_index]), (2.2f / 3.0f));
 }
 //=============================================================================
-__global__ void map_to_luminance_domain_kernel2(float* float_img_in1, float* L_hat1, float* float_img_in2, float* L_hat2)
-{
-	// Grab indices
-	int index_x = threadIdx.x + blockIdx.x * blockDim.x;
-	int index_y = threadIdx.y + blockIdx.y * blockDim.y;
-
-	// map the two 2D indices to a single linear, 1D index
-	int grid_width = gridDim.x * blockDim.x;
-	int grid_index = index_y * grid_width + index_x;
-
-	// Map from Pixel Domain [unitless] to Luminance Domain [cd/m^2] - (MAD eq. 1 and eq. 2)
-	L_hat1[grid_index] = pow((0.02874f*float_img_in1[grid_index]), (2.2f / 3.0f));
-	L_hat2[grid_index] = pow((0.02874f*float_img_in2[grid_index]), (2.2f / 3.0f));
-}
-//=============================================================================
-__global__ void error_img_kernel(const float* ref, const float* dst, float* err)
+__global__ void D2_error_img_kernel(const float* ref, const float* dst, float* err)
 {
 	// Grab indices
 	int index_x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -224,7 +311,7 @@ __global__ void build_CSF_kernel(float* csf, const float* yPlane, const float* x
 	}
 }
 //=============================================================================
-__global__ void fftShift_kernel(float* img)
+__global__ void A2_fftShift_kernel(float* img)
 {
 	int i = threadIdx.x + blockIdx.x * blockDim.x;
 	if (i < 256)
@@ -244,7 +331,7 @@ __global__ void fftShift_kernel(float* img)
 	}
 }
 //=============================================================================
-__global__ void delta_stats_kernel(float *ref_outStd, float *ref_outSkw, float* ref_outKrt,
+__global__ void A6_delta_stats_kernel(float *ref_outStd, float *ref_outSkw, float* ref_outKrt,
 	float* dst_outStd, float* dst_outSkw, float* dst_outKrt, float scale, float* eta)
 {
 	// Grab indices
@@ -261,13 +348,14 @@ __global__ void delta_stats_kernel(float *ref_outStd, float *ref_outSkw, float* 
 	eta[grid_index] += scale*(delta_stat1 + 2 * delta_stat2 + delta_stat3);
 }
 //=============================================================================
-__global__ void fast_lo_stats_kernel(float* xVal, float* outStd, float* outSkw, float* outKrt)
+__global__ void A5_lo_stats(float* xVal1, float* outStd1, float* outSkw1, float* outKrt1)
 {
 	//Declarations
 	//__shared__ float xVal_Shm[256];
-	float xVal_local[256];
+	float xVal_local1[256];
 
-	float mean, stdev, skw, krt, stmp;
+
+	float mean1, stdev1, skw1, krt1, stmp1;
 	int iB, jB;
 
 	//for (i = 0; i<512 - 15; i += 4)
@@ -287,40 +375,45 @@ __global__ void fast_lo_stats_kernel(float* xVal, float* outStd, float* outSkw, 
 			{
 				for (jB = j; jB < j + 16; jB++)
 				{
-					xVal_local[idx] = xVal[iB * 512 + jB];
+					xVal_local1[idx] = xVal1[iB * 512 + jB];
 					idx++;
 				}
 			}
 
 			//Traverse through and get mean
-			float mean = 0;
+			//float mean = 0;
+			mean1 = 0;
 			for (idx = 0; idx < 256; idx++)
-				mean += xVal_local[idx];				//this can be a simple reduction in shared memory
-			mean = mean / 256.0f;
+			{
+				mean1 += xVal_local1[idx];				//this can be a simple reduction in shared memory
+			}
+			mean1 = mean1 / 256.0f;
 
 			//Traverse through and get stdev, skew and kurtosis
-			stdev = 0;
-			skw = 0;
-			krt = 0;
-			float xV_mean = 0;
+			stdev1 = 0;
+			skw1 = 0;
+			krt1 = 0;
+
+			float xV_mean1 = 0, xV_mean2 = 0;
 			for (idx = 0; idx < 256; idx++)
 			{
 				// Place this commonly re-used value into a register to preserve temporal localitiy
-				xV_mean = xVal_local[idx] - mean;
-				stdev += xV_mean*xV_mean;
-				skw += xV_mean*xV_mean*xV_mean;
-				krt += xV_mean*xV_mean*xV_mean*xV_mean;
-			}
-			stmp = sqrt(stdev / 256.0f);
-			stdev = sqrt(stdev / 255.0f);//MATLAB's std is a bit different
+				xV_mean1 = xVal_local1[idx] - mean1;
+				stdev1 += xV_mean1*xV_mean1;
+				skw1 += xV_mean1*xV_mean1*xV_mean1;
+				krt1 += xV_mean1*xV_mean1*xV_mean1*xV_mean1;
 
-			if (stmp != 0){
-				skw = (skw / 256.0f) / ((stmp)*(stmp)*(stmp));
-				krt = (krt / 256.0f) / ((stmp)*(stmp)*(stmp)*(stmp));
+			}
+			stmp1 = sqrt(stdev1 / 256.0f);
+			stdev1 = sqrt(stdev1 / 255.0f);//MATLAB's std is a bit different
+
+			if (stmp1 != 0){
+				skw1 = (skw1 / 256.0f) / ((stmp1)*(stmp1)*(stmp1));
+				krt1 = (krt1 / 256.0f) / ((stmp1)*(stmp1)*(stmp1)*(stmp1));
 			}
 			else{
-				skw = 0;
-				krt = 0;
+				skw1 = 0;
+				krt1 = 0;
 			}
 
 			//---------------------------------------------------------------------------
@@ -335,9 +428,9 @@ __global__ void fast_lo_stats_kernel(float* xVal, float* outStd, float* outSkw, 
 			{
 				for (jB = j; jB < j + 4; jB++)
 				{
-					outStd[(iB * 512) + jB] = stdev;
-					outSkw[(iB * 512) + jB] = skw;
-					outKrt[(iB * 512) + jB] = krt;
+					outStd1[(iB * 512) + jB] = stdev1;
+					outSkw1[(iB * 512) + jB] = skw1;
+					outKrt1[(iB * 512) + jB] = krt1;
 				}
 			}
 
@@ -555,7 +648,7 @@ __global__ void product_array_kernel(float* out, float* in1, float* in2)
 	}
 }
 //=============================================================================
-cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
+void kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
 {
 	int  GPU_N, device_num_used;
 	cudaGetDeviceCount(&GPU_N);
@@ -654,20 +747,14 @@ cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
 
 	for (int timing_idx = 0; timing_idx < itteration_num; ++timing_idx)
 	{
-
 		// Begin NVTX Marker:
 		nvtxRangePushA("CUDA-MAD");
-
 
 		// Build CSF on Device
 		yPlane_CSF_kernel << < 1, 1, 0, stream[1] >> >(d_yPlane);
 		xPlane_CSF_kernel << < 1, 1, 0, stream[1] >> >(d_xPlane);
 		build_CSF_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_CSF, d_yPlane, d_xPlane);
-		fftShift_kernel << < fftShift_grid_size, fftShift_block_size, 0, stream[1] >> >(d_CSF);
-
-
-		
-		
+		A2_fftShift_kernel << < fftShift_grid_size, fftShift_block_size, 0, stream[1] >> >(d_CSF);
 
 		// Linearize REAL image data and copy data from HOST -> DEVICE
 		nvtxRangePushA("Linearize ref");// Begin NVTX Marker for Linearize ref
@@ -676,12 +763,12 @@ cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
 		
 		cudaMemcpyAsync(d_img_ref_float, h_img_ref_float, REAL_SIZE, cudaMemcpyDeviceToHost, stream[1]); //DEVICE -> HOST
 		//cudaMemcpy(d_img_ref_float, h_img_ref_float, REAL_SIZE, cudaMemcpyDeviceToHost); //DEVICE -> HOST
-		map_to_luminance_domain_kernel1 << < gridSize, blockSize, 0, stream[1] >> >(d_img_ref_float, d_L_hat_ref);
+		D1_map_to_luminance_domain_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_img_ref_float, d_L_hat_ref);
 		R2C_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref, d_L_hat_ref_complex);
 		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_ref_complex, (cufftComplex *)d_L_hat_ref_complex, CUFFT_FORWARD);
-		pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref_complex, d_CSF, d_L_hat_ref_complex);
+		A3_D3_pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref_complex, d_CSF, d_L_hat_ref_complex);
 		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_ref_complex, (cufftComplex *)d_L_hat_ref_complex, CUFFT_INVERSE);
-		real_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref_complex, d_I_prime_org);
+		D4_real_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref_complex, d_I_prime_org);
 
 		nvtxRangePushA("Linearize dst");// Begin NVTX Marker for Linearize ref
 		linearize_and_cast_from_Mat_to_float(mat_dst, h_img_dst_float);
@@ -689,18 +776,18 @@ cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
 
 		cudaMemcpyAsync(d_img_dst_float, h_img_dst_float, REAL_SIZE, cudaMemcpyDeviceToHost, stream[1]); //DEVICE -> HOST
 		//cudaMemcpy(d_img_dst_float, h_img_dst_float, REAL_SIZE, cudaMemcpyDeviceToHost); //DEVICE -> HOST
-		map_to_luminance_domain_kernel1 << < gridSize, blockSize, 0, stream[1] >> >(d_img_dst_float, d_L_hat_dst);
+		D1_map_to_luminance_domain_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_img_dst_float, d_L_hat_dst);
 		R2C_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst, d_L_hat_dst_complex);
 		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_dst_complex, (cufftComplex *)d_L_hat_dst_complex, CUFFT_FORWARD);
-		pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst_complex, d_CSF, d_L_hat_dst_complex);
+		A3_D3_pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst_complex, d_CSF, d_L_hat_dst_complex);
 		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_dst_complex, (cufftComplex *)d_L_hat_dst_complex, CUFFT_INVERSE);
-		real_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst_complex, d_I_prime_dst);
+		D4_real_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst_complex, d_I_prime_dst);
 
 
 		// Detection Statistics
 		square_of_difference_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_img_ref_float, d_img_dst_float, d_reflut);
 		LMSE_map_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_reflut, d_lmse);
-		error_img_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_I_prime_org, d_I_prime_dst, d_I_prime_err);
+		D2_error_img_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_I_prime_org, d_I_prime_dst, d_I_prime_err);
 		fast_hi_stats_kernel1 << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_I_prime_err, d_I_prime_org, d_outStd, d_outStdMod, d_outMean, d_img_ref_float, d_img_dst_float, d_TEMP);
 		fast_hi_stats_kernel2 << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_I_prime_err, d_I_prime_org, d_outStd, d_outStdMod, d_outMean, d_img_ref_float, d_img_dst_float, d_TEMP);
 		zeta_map_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_outMean, d_outStd, d_outStdMod, d_zeta);
@@ -724,24 +811,20 @@ cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
 		{
 			for (int s = 0; s < 5; s++)
 			{
-				buildGabor << < gridSize, blockSize, 0, stream[1] >> >(d_logGabor, o, s);
-				fftShift_kernel << < fftShift_grid_size, fftShift_block_size, 0, stream[1] >> >(d_logGabor);
+				A1_build_gabor <<< fftShift_grid_size, fftShift_block_size, 0, stream[1] >>>(d_logGabor, o, s);
 
-				pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_ref_cufft, d_logGabor, d_ref_c);
-				pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_dst_cufft, d_logGabor, d_dst_c);
+				A3_D3_pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_ref_cufft, d_logGabor, d_ref_c);
+				A3_D3_pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_dst_cufft, d_logGabor, d_dst_c);
 
 				cufftExecC2C(fftPlan[1], (cufftComplex *)d_ref_c, (cufftComplex *)d_ref_c, CUFFT_INVERSE);
 				cufftExecC2C(fftPlan[1], (cufftComplex *)d_dst_c, (cufftComplex *)d_dst_c, CUFFT_INVERSE);
 
+				A4_mag_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_ref_c, d_ref_c_mag, d_dst_c, d_dst_c_mag);
 
-				magnitude_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_ref_c, d_ref_c_mag);
-				magnitude_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_dst_c, d_dst_c_mag);
+				A5_lo_stats << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_ref_c_mag, d_ref_Std, d_ref_Skw, d_ref_Krt);
+				A5_lo_stats << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_dst_c_mag, d_dst_Std, d_dst_Skw, d_dst_Krt);
 
-
-				fast_lo_stats_kernel << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_ref_c_mag, d_ref_Std, d_ref_Skw, d_ref_Krt);
-				fast_lo_stats_kernel << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_dst_c_mag, d_dst_Std, d_dst_Skw, d_dst_Krt);
-
-				delta_stats_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_ref_Std, d_ref_Skw, d_ref_Krt,
+				A6_delta_stats_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_ref_Std, d_ref_Skw, d_ref_Krt,
 					d_dst_Std, d_dst_Skw, d_dst_Krt, scale[s] / 13.25f, d_eta);
 			}
 		}
@@ -799,7 +882,7 @@ cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
 	// tracing tools such as Nsight and Visual Profiler to show complete traces.
 	cudaDeviceReset();
 
-	return cudaStatus;
+	//return cudaStatus;
 }
 //=============================================================================
 void linearize_and_cast_from_Mat_to_float(const cv::Mat& mat_in, float* h_float)
