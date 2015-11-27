@@ -29,10 +29,12 @@ int do_main()
 	double detection_statistic_GPU_average = 0;
 	
 
-	//// Read in images
-	for (int i = 0; i < 1; i++)
+	////// Read in images
+	//for (int i = 0; i < 1; i++)
+	int i = 0;
 	{
-		for (int j = 0; j < NUM_IMAGES; j++)
+		//for (int j = 0; j < NUM_IMAGES; j++)
+		int j = 0;
 		{
 			// Read in images
 			cv::Mat mat_ref = cv::imread("horse.bmp", CV_8UC1); // CV_LOAD_IMAGE_UNCHANGED);
@@ -41,34 +43,35 @@ int do_main()
 			//cv::Mat mat_dst = cv::imread(distorted_image_name[j], CV_8UC1); // CV_LOAD_IMAGE_UNCHANGED);
 
 			// Call function in .cu file
-			cudaError_t cudaStatus = kernel_wrapper(mat_ref, mat_dst);
-			image_index = image_index + 1;
-			if (cudaStatus != cudaSuccess)
-			{
-				fprintf(stderr, "kernel_wrapper function failed!");
-				return 1;
-			}
-			else
-				//printf("Exit with zero errors...\n");
-			{
-				//printf("Execution number %d\n", image_index);
-#ifdef CSF_FILTER
-				csf_filter_Gpu_aevrage += image_array[image_index - 1].csf_filter_Gpu;
-				//printf("image_array[%d].csf_filter_Gpu = %lf\n", image_index, image_array[image_index - 1].csf_filter_Gpu);
-#endif
-#ifdef LOW_STATS
-				appearence_statistic_Gpu_average += image_array[image_index - 1].appearence_statistic_Gpu;
-				//printf("image_array[%d].appearence_statistic_Gpu = %lf\n", image_index, image_array[image_index - 1].appearence_statistic_Gpu);
-#endif
-#ifdef LOG_GABOR
-				detection_gabor_filterbank_GPU_average += image_array[image_index - 1].detection_gabor_filterbank_GPU;
-				//printf("image_array[%d].detection_gabor_filterbank_GPU = %lf\n", image_index, image_array[image_index - 1].detection_gabor_filterbank_GPU);
-#endif
-#ifdef HI_STATS
-				detection_statistic_GPU_average += image_array[image_index - 1].detection_statistic_GPU;
-				//printf("image_array[%d].detection_statistic_GPU = %lf\n", image_index, image_array[image_index - 1].detection_statistic_GPU);
-#endif
-			}
+			//cudaError_t cudaStatus = kernel_wrapper(mat_ref, mat_dst);
+			kernel_wrapper(mat_ref, mat_dst);
+			//image_index = image_index + 1;
+			//if (cudaStatus != cudaSuccess)
+			//{
+			//	fprintf(stderr, "kernel_wrapper function failed!");
+			//	return 1;
+			//}
+//			else
+//				//printf("Exit with zero errors...\n");
+//			{
+//				//printf("Execution number %d\n", image_index);
+//#ifdef CSF_FILTER
+//				csf_filter_Gpu_aevrage += image_array[image_index - 1].csf_filter_Gpu;
+//				//printf("image_array[%d].csf_filter_Gpu = %lf\n", image_index, image_array[image_index - 1].csf_filter_Gpu);
+//#endif
+//#ifdef LOW_STATS
+//				appearence_statistic_Gpu_average += image_array[image_index - 1].appearence_statistic_Gpu;
+//				//printf("image_array[%d].appearence_statistic_Gpu = %lf\n", image_index, image_array[image_index - 1].appearence_statistic_Gpu);
+//#endif
+//#ifdef LOG_GABOR
+//				detection_gabor_filterbank_GPU_average += image_array[image_index - 1].detection_gabor_filterbank_GPU;
+//				//printf("image_array[%d].detection_gabor_filterbank_GPU = %lf\n", image_index, image_array[image_index - 1].detection_gabor_filterbank_GPU);
+//#endif
+//#ifdef HI_STATS
+//				detection_statistic_GPU_average += image_array[image_index - 1].detection_statistic_GPU;
+//				//printf("image_array[%d].detection_statistic_GPU = %lf\n", image_index, image_array[image_index - 1].detection_statistic_GPU);
+//#endif
+//			}
 				
 		}
 	}
@@ -86,16 +89,16 @@ int do_main()
 int main(int argc, char* argv[])
 {
 	int failure_code = 0;
-	try
-	{
+	//try
+	//{
 		failure_code = do_main();
-	}
-	catch (std::exception const& err)
-	{
-		std::printf("%s\n", err.what());
-		failure_code = 1;
-		getchar();
-	}
+	//}
+	//catch (std::exception const& err)
+	//{
+	//	std::printf("%s\n", err.what());
+	//	failure_code = 1;
+	//	getchar();
+	//}
 
 	system("pause"); // Remove this for profiling
 	//return failure_code;
