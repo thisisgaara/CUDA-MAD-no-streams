@@ -49,7 +49,7 @@ extern int image_index; //This variable indexes into the image_array
 extern double timing_sum_combine_mad;
 //=============================================================================
 // Declare Functions:
-cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst);
+void kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst);
 void linearize_and_cast_from_Mat_to_float(const cv::Mat& mat_in, float* h_float);
 void de_linearize_and_cast_float_to_Mat(float *float_array, cv::Mat &mat_out, const int SIZE);
 void write_to_file_DEBUG(float* w, const int SIZE);
