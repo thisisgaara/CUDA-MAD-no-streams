@@ -15,6 +15,12 @@
 //=============================================================================
 #include <cufft.h>
 //=============================================================================
+// For syuncthreads detection
+#pragma once
+#ifdef __INTELLISENSE__
+void __syncthreads();
+#endif
+//=============================================================================
 // CPU Timer
 #include <windows.h>
 //=============================================================================
@@ -25,6 +31,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <math.h>
+#include <conio.h>
 //=============================================================================
 #define CSF_FILTER
 #define HI_STATS
@@ -33,6 +40,22 @@
 #define COMBINE_MAD
 
 //----------------------------------------------------------------------------
+//=============================================================================
+#define N							512
+#define IMG_SIZE			N*N
+#define LMSE_CONST		7 + 7 * N
+#define PI						3.1415927
+#define thetaSigma		0.5235988
+#define BLOCK_SIZE		16
+#define REAL_SIZE			sizeof(float)* IMG_SIZE
+#define COMPLEX_SIZE	sizeof(cufftComplex)* IMG_SIZE
+#define SHARED_MEM	12288
+//=============================================================================
+//Constant memory //Ref: https://devtalk.nvidia.com/default/topic/910290/cuda-programming-and-performance/using-constant-memory/
+__constant__ float nOrient;
+__constant__ float nScale;
+__constant__ float sigmaOnf;
+__constant__ float wavelength[5];
 //image array
 typedef struct image
 {
@@ -49,7 +72,7 @@ extern int image_index; //This variable indexes into the image_array
 extern double timing_sum_combine_mad;
 //=============================================================================
 // Declare Functions:
-void kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst);
+cudaError_t kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst);
 void linearize_and_cast_from_Mat_to_float(const cv::Mat& mat_in, float* h_float);
 void de_linearize_and_cast_float_to_Mat(float *float_array, cv::Mat &mat_out, const int SIZE);
 void write_to_file_DEBUG(float* w, const int SIZE);
