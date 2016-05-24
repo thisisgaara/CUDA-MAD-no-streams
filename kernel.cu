@@ -1,16 +1,60 @@
-//=============================================================================
+// kernel.cu
+//-------------------------------------------------------------------
 #include "header.h"
+//-------------------------------------------------------------------
+
+// CUDA Kernel
+__global__ void colorKernel_GPU(	const unsigned char* d_in,
+																	unsigned char* d_out,
+																	const int num_cols,
+																	const int num_rows,
+																	const int colorWidthStep,
+																	const int grayWidthStep)
+{
+	//2D Index of current thread
+	const int colIdx = blockIdx.x * blockDim.x + threadIdx.x;
+	const int rowIdx = blockIdx.y * blockDim.y + threadIdx.y;
+
+	//Only valid threads perform memory I/O
+	if ((colIdx < num_cols) && (rowIdx < num_rows))
+	{
+		//Location of colored pixel in input
+		const int color_idx = rowIdx * colorWidthStep + (3 * colIdx);
+
+		//Location of gray pixel in output
+		const int gray_idx = rowIdx * grayWidthStep + (1 * colIdx);
+
+		const unsigned char b = d_in[color_idx + 0];
+		const unsigned char g = d_in[color_idx + 1];
+		const unsigned char r = d_in[color_idx + 2];
+
+		const float B_processed = b * 0.11f;//b * 1.0f; // Blue Channel is unchanged
+		const float G_processed = g * 0.59f;//g * 1.0f; // Green Channel is unchanged
+		const float R_processed = r * 0.3f; //r * 0.0f; // Turn off Red Channel
+
+
+		d_out[gray_idx] = static_cast<unsigned char>(B_processed + G_processed + R_processed);
+		//d_out[color_idx + 0] = static_cast<unsigned char>(B_processed);
+		//d_out[color_idx + 1] = static_cast<unsigned char>(G_processed);
+		//d_out[color_idx + 2] = static_cast<unsigned char>(R_processed);
+
+	}
+}
+//-------------------------------------------------------------------
+
 //=============================================================================
-#define N							512
-#define IMG_SIZE			N*N
-#define LMSE_CONST		7 + 7 * N
-#define PI						3.1415927
-#define thetaSigma		0.5235988
-#define BLOCK_SIZE		16
-#define REAL_SIZE			sizeof(float)* IMG_SIZE
-#define COMPLEX_SIZE	sizeof(cufftComplex)* IMG_SIZE
+void linearize_and_cast_from_Mat_to_float(const cv::Mat& mat_in, float* h_float)
+{
+	for (int row = 0; row < 512; row++)
+	{
+		for (int col = 0; col < 512; col++)
+		{
+			h_float[row * 512 + col] = static_cast<float>(mat_in.at<unsigned char>(row, col));
+		}
+	}
+}
 //=============================================================================
-__global__ void A1_build_gabor(float* logGabor, const int orientIdx, const int scaleIdx)
+__global__ void buildGabor(float* logGabor, const int orientIdx, const int scaleIdx)
 {
 	const float nOrient = 4.0f;
 	const float nScale = 5.0f;
@@ -25,126 +69,29 @@ __global__ void A1_build_gabor(float* logGabor, const int orientIdx, const int s
 	//for (int i = 0; i < N; i++)
 	int i = threadIdx.x + blockDim.x * blockIdx.x;
 	int j = threadIdx.y + blockDim.y * blockIdx.y;
+	int lin_idx = i * N + j;
 
-	int lin_idx = 0;
+	// REDUCE GLOBAL MEMORY TRAFIC BY COMPUTING EACH INDIVIDUAL MATRIX VALUE IN EACH THREAD
+	float Y = -1 + i*0.003906f;
+	float X = -1 + j*0.003906f;
+	float sin_theta_temp = sin(atan2f(-Y, X));
+	float cos_theta_temp = cos(atan2f(-Y, X));
+	float radius_temp = sqrt(X * X + Y * Y);
 
-	//int i = threadIdx.x + blockIdx.x * blockDim.x;
-	if (i < 256)
-	{
-		//int j = threadIdx.y + blockIdx.y * blockDim.y;
-		if (j < 256)
-		{
-			//float temp = logGabor[i * 512 + j];
-			//logGabor[i * 512 + j] = logGabor[(i + 256) * 512 + (j + 256)];
-			lin_idx = i * N + j;
-			i = i + 256;
-			j = j + 256;
+	float ds = sin_theta_temp * cos(angl) - cos_theta_temp * sin(angl); // Difference in sin
+	float dc = cos_theta_temp * cos(angl) + sin_theta_temp * sin(angl); // Difference in cos
+	float diffTheta = abs(atan2(ds, dc));																			// Absolute angular distance
+	float spread = exp((-diffTheta * diffTheta) / (2 * thetaSigma * thetaSigma)); // Calculate the angular filter component.
+	float gabor = exp((-(log(radius_temp / rfo)) * (log(radius_temp / rfo)) / (2 * log(0.55f) * log(0.55f))));
+	logGabor[lin_idx] = spread * gabor;
 
-			// REDUCE GLOBAL MEMORY TRAFIC BY COMPUTING EACH INDIVIDUAL MATRIX VALUE IN EACH THREAD
-			float Y = -1 + i*0.003906f;
-			float X = -1 + j*0.003906f;
-			float sin_theta_temp = sin(atan2f(-Y, X));
-			float cos_theta_temp = cos(atan2f(-Y, X));
-			float radius_temp = sqrt(X * X + Y * Y);
-
-			float ds = sin_theta_temp * cos(angl) - cos_theta_temp * sin(angl); // Difference in sin
-			float dc = cos_theta_temp * cos(angl) + sin_theta_temp * sin(angl); // Difference in cos
-			float diffTheta = abs(atan2(ds, dc));																			// Absolute angular distance
-			float spread = exp((-diffTheta * diffTheta) / (2 * thetaSigma * thetaSigma)); // Calculate the angular filter component.
-			float gabor = exp((-(log(radius_temp / rfo)) * (log(radius_temp / rfo)) / (2 * log(0.55f) * log(0.55f))));
-			logGabor[lin_idx] = spread * gabor;
-
-			if (lin_idx == 131328)// lin_idx = (N^2 + N)/2 = 131328 (N=512)
-				logGabor[lin_idx] = 0.0f;	//Get rid of the 0 radius value
-
-			
-			//logGabor[(i + 256) * 512 + (j + 256)] = temp;
-
-			i = threadIdx.x + blockIdx.x * blockDim.x;
-			j = threadIdx.y + blockIdx.y * blockDim.y;
-			lin_idx = (i + 256) * 512 + (j + 256);
-			i = i;
-			j = j;
-
-			// REDUCE GLOBAL MEMORY TRAFIC BY COMPUTING EACH INDIVIDUAL MATRIX VALUE IN EACH THREAD
-			Y = -1 + i*0.003906f;
-			X = -1 + j*0.003906f;
-			sin_theta_temp = sin(atan2f(-Y, X));
-			cos_theta_temp = cos(atan2f(-Y, X));
-			radius_temp = sqrt(X * X + Y * Y);
-
-			ds = sin_theta_temp * cos(angl) - cos_theta_temp * sin(angl); // Difference in sin
-			dc = cos_theta_temp * cos(angl) + sin_theta_temp * sin(angl); // Difference in cos
-			diffTheta = abs(atan2(ds, dc));																			// Absolute angular distance
-			spread = exp((-diffTheta * diffTheta) / (2 * thetaSigma * thetaSigma)); // Calculate the angular filter component.
-			gabor = exp((-(log(radius_temp / rfo)) * (log(radius_temp / rfo)) / (2 * log(0.55f) * log(0.55f))));
-			logGabor[lin_idx] = spread * gabor;
-
-			if (lin_idx == 131328)// lin_idx = (N^2 + N)/2 = 131328 (N=512)
-				logGabor[lin_idx] = 0.0f;	//Get rid of the 0 radius value
-
-
-
-
-			//temp = logGabor[(i + 256) * 512 + j];
-			//logGabor[(i + 256) * 512 + j] = logGabor[i * 512 + (j + 256)];
-			i = threadIdx.x + blockIdx.x * blockDim.x;
-			j = threadIdx.y + blockIdx.y * blockDim.y;
-			lin_idx = (i + 256) * 512 + j;
-			i = i;
-			j = j + 256;
-			
-			// REDUCE GLOBAL MEMORY TRAFIC BY COMPUTING EACH INDIVIDUAL MATRIX VALUE IN EACH THREAD
-			Y = -1 + i*0.003906f;
-			X = -1 + j*0.003906f;
-			sin_theta_temp = sin(atan2f(-Y, X));
-			cos_theta_temp = cos(atan2f(-Y, X));
-			radius_temp = sqrt(X * X + Y * Y);
-
-			ds = sin_theta_temp * cos(angl) - cos_theta_temp * sin(angl); // Difference in sin
-			dc = cos_theta_temp * cos(angl) + sin_theta_temp * sin(angl); // Difference in cos
-			diffTheta = abs(atan2(ds, dc));																			// Absolute angular distance
-			spread = exp((-diffTheta * diffTheta) / (2 * thetaSigma * thetaSigma)); // Calculate the angular filter component.
-			gabor = exp((-(log(radius_temp / rfo)) * (log(radius_temp / rfo)) / (2 * log(0.55f) * log(0.55f))));
-			logGabor[lin_idx] = spread * gabor;
-
-			if (lin_idx == 131328)// lin_idx = (N^2 + N)/2 = 131328 (N=512)
-				logGabor[lin_idx] = 0.0f;	//Get rid of the 0 radius value
-			
-			
-			
-			
-			
-			
-			//logGabor[i * 512 + (j + 256)] = temp;
-			i = threadIdx.x + blockIdx.x * blockDim.x;
-			j = threadIdx.y + blockIdx.y * blockDim.y;
-			lin_idx = i * 512 + (j + 256);
-			i = i + 256;
-			j = j ;
-
-			// REDUCE GLOBAL MEMORY TRAFIC BY COMPUTING EACH INDIVIDUAL MATRIX VALUE IN EACH THREAD
-			Y = -1 + i*0.003906f;
-			X = -1 + j*0.003906f;
-			sin_theta_temp = sin(atan2f(-Y, X));
-			cos_theta_temp = cos(atan2f(-Y, X));
-			radius_temp = sqrt(X * X + Y * Y);
-
-			ds = sin_theta_temp * cos(angl) - cos_theta_temp * sin(angl); // Difference in sin
-			dc = cos_theta_temp * cos(angl) + sin_theta_temp * sin(angl); // Difference in cos
-			diffTheta = abs(atan2(ds, dc));																			// Absolute angular distance
-			spread = exp((-diffTheta * diffTheta) / (2 * thetaSigma * thetaSigma)); // Calculate the angular filter component.
-			gabor = exp((-(log(radius_temp / rfo)) * (log(radius_temp / rfo)) / (2 * log(0.55f) * log(0.55f))));
-			logGabor[lin_idx] = spread * gabor;
-
-			if (lin_idx == 131328)// lin_idx = (N^2 + N)/2 = 131328 (N=512)
-				logGabor[lin_idx] = 0.0f;	//Get rid of the 0 radius value
-		}
-	}
-
+	// WHY TEST ALL VALUES?
+	// EXECUTE KERNEL THEN ONLY MODIFY THIS SINGLE VALUE IN ANOTHER KERNEL
+	if (lin_idx == 131328)// lin_idx = (N^2 + N)/2 = 131328 (N=512)
+		logGabor[lin_idx] = 0.0f;	//Get rid of the 0 radius value
 }
 //=============================================================================
-__global__ void A3_D3_pointWise_complex_matrix_mult_kernel_2d(cufftComplex* img_spectrum, float* real_filter, cufftComplex* out)
+__global__ void pointWise_complex_matrix_mult_kernel_2d(cufftComplex* img_spectrum, float* real_filter, cufftComplex* out)
 {
 	// Grab indices
 	int index_x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -163,8 +110,7 @@ __global__ void A3_D3_pointWise_complex_matrix_mult_kernel_2d(cufftComplex* img_
 	out[grid_index].y = real_filter[grid_index] * img_spectrum[grid_index].y;	//Im(out)
 }
 //=============================================================================
-__global__ void A4_mag_kernel(cufftComplex* d_inverse_complex1, float* d_inverse_mag1,
-	cufftComplex* d_inverse_complex2, float* d_inverse_mag2)
+__global__ void magnitude_kernel(cufftComplex* d_inverse_complex, float* d_inverse_mag)
 {
 	// Grab indices
 	int index_x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -175,18 +121,14 @@ __global__ void A4_mag_kernel(cufftComplex* d_inverse_complex1, float* d_inverse
 	int grid_index = index_y * grid_width + index_x;
 
 	// Grab Real and Imaginary parts of d_inverse_complex
-	float a1 = d_inverse_complex1[grid_index].x / float(IMG_SIZE);
-	float b1 = d_inverse_complex1[grid_index].y / float(IMG_SIZE);
-
-	float a2 = d_inverse_complex2[grid_index].x / float(IMG_SIZE);
-	float b2 = d_inverse_complex2[grid_index].y / float(IMG_SIZE);
+	float a = d_inverse_complex[grid_index].x / (IMG_SIZE);
+	float b = d_inverse_complex[grid_index].y / (IMG_SIZE);
 
 	// Apply pythagorean formula (Euclidean L2-Norm)
-	d_inverse_mag1[grid_index] = sqrt(a1*a1 + b1*b1);
-	d_inverse_mag2[grid_index] = sqrt(a2*a2 + b2*b2);
+	d_inverse_mag[grid_index] = sqrt(a*a + b*b);
 }
 //=============================================================================
-__global__ void D4_real_kernel(cufftComplex* complex_in, float* real_out)
+__global__ void real_kernel(cufftComplex* complex_in, float* real_out)
 {
 	// Grab indices
 	int index_x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -239,7 +181,7 @@ __global__ void xPlane_CSF_kernel(float* xPlane)
 	}
 }
 //=============================================================================
-__global__ void D1_map_to_luminance_domain_kernel(float* float_img_in, float* L_hat)
+__global__ void map_to_luminance_domain_kernel1(float* float_img_in, float* L_hat)
 {
 	// Grab indices
 	int index_x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -253,7 +195,22 @@ __global__ void D1_map_to_luminance_domain_kernel(float* float_img_in, float* L_
 	L_hat[grid_index] = pow((0.02874f*float_img_in[grid_index]), (2.2f / 3.0f));
 }
 //=============================================================================
-__global__ void D2_error_img_kernel(const float* ref, const float* dst, float* err)
+__global__ void map_to_luminance_domain_kernel2(float* float_img_in1, float* L_hat1, float* float_img_in2, float* L_hat2)
+{
+	// Grab indices
+	int index_x = threadIdx.x + blockIdx.x * blockDim.x;
+	int index_y = threadIdx.y + blockIdx.y * blockDim.y;
+
+	// map the two 2D indices to a single linear, 1D index
+	int grid_width = gridDim.x * blockDim.x;
+	int grid_index = index_y * grid_width + index_x;
+
+	// Map from Pixel Domain [unitless] to Luminance Domain [cd/m^2] - (MAD eq. 1 and eq. 2)
+	L_hat1[grid_index] = pow((0.02874f*float_img_in1[grid_index]), (2.2f / 3.0f));
+	L_hat2[grid_index] = pow((0.02874f*float_img_in2[grid_index]), (2.2f / 3.0f));
+}
+//=============================================================================
+__global__ void error_img_kernel(const float* ref, const float* dst, float* err)
 {
 	// Grab indices
 	int index_x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -311,7 +268,7 @@ __global__ void build_CSF_kernel(float* csf, const float* yPlane, const float* x
 	}
 }
 //=============================================================================
-__global__ void A2_fftShift_kernel(float* img)
+__global__ void fftShift_kernel(float* img)
 {
 	int i = threadIdx.x + blockIdx.x * blockDim.x;
 	if (i < 256)
@@ -331,7 +288,7 @@ __global__ void A2_fftShift_kernel(float* img)
 	}
 }
 //=============================================================================
-__global__ void A6_delta_stats_kernel(float *ref_outStd, float *ref_outSkw, float* ref_outKrt,
+__global__ void delta_stats_kernel(float *ref_outStd, float *ref_outSkw, float* ref_outKrt,
 	float* dst_outStd, float* dst_outSkw, float* dst_outKrt, float scale, float* eta)
 {
 	// Grab indices
@@ -348,14 +305,13 @@ __global__ void A6_delta_stats_kernel(float *ref_outStd, float *ref_outSkw, floa
 	eta[grid_index] += scale*(delta_stat1 + 2 * delta_stat2 + delta_stat3);
 }
 //=============================================================================
-__global__ void A5_lo_stats(float* xVal1, float* outStd1, float* outSkw1, float* outKrt1)
+__global__ void fast_lo_stats_kernel(float* xVal, float* outStd, float* outSkw, float* outKrt)
 {
 	//Declarations
 	//__shared__ float xVal_Shm[256];
-	float xVal_local1[256];
+	float xVal_local[256] = { 0 };
 
-
-	float mean1, stdev1, skw1, krt1, stmp1;
+	float mean=0,  stdev = 0,skw = 0, krt=0,  stmp = 0;
 	int iB, jB;
 
 	//for (i = 0; i<512 - 15; i += 4)
@@ -375,47 +331,50 @@ __global__ void A5_lo_stats(float* xVal1, float* outStd1, float* outSkw1, float*
 			{
 				for (jB = j; jB < j + 16; jB++)
 				{
-					xVal_local1[idx] = xVal1[iB * 512 + jB];
+					xVal_local[idx] = xVal[iB * 512 + jB];
 					idx++;
 				}
 			}
-
 			//Traverse through and get mean
-			//float mean = 0;
-			mean1 = 0;
+			float mean = 0;
 			for (idx = 0; idx < 256; idx++)
-			{
-				mean1 += xVal_local1[idx];				//this can be a simple reduction in shared memory
-			}
-			mean1 = mean1 / 256.0f;
+				mean += xVal_local[idx];				//this can be a simple reduction in shared memory
+			mean = mean / 256.0f;
 
 			//Traverse through and get stdev, skew and kurtosis
-			stdev1 = 0;
-			skw1 = 0;
-			krt1 = 0;
-
-			float xV_mean1 = 0, xV_mean2 = 0;
+			stdev = 0;
+			skw = 0;
+			krt = 0;
+			float xV_mean = 0;
 			for (idx = 0; idx < 256; idx++)
 			{
 				// Place this commonly re-used value into a register to preserve temporal localitiy
-				xV_mean1 = xVal_local1[idx] - mean1;
-				stdev1 += xV_mean1*xV_mean1;
-				skw1 += xV_mean1*xV_mean1*xV_mean1;
-				krt1 += xV_mean1*xV_mean1*xV_mean1*xV_mean1;
-
+				xV_mean = xVal_local[idx] - mean;
+				stdev = stdev + (xV_mean * xV_mean);
+				skw = skw + (xV_mean * xV_mean * xV_mean);
+				krt = krt + (xV_mean * xV_mean * xV_mean * xV_mean);
 			}
-			stmp1 = sqrt(stdev1 / 256.0f);
-			stdev1 = sqrt(stdev1 / 255.0f);//MATLAB's std is a bit different
-
-			if (stmp1 != 0){
-				skw1 = (skw1 / 256.0f) / ((stmp1)*(stmp1)*(stmp1));
-				krt1 = (krt1 / 256.0f) / ((stmp1)*(stmp1)*(stmp1)*(stmp1));
+			stmp = sqrt(stdev / 256.0f);
+			stdev = sqrt(stdev / 255.0f);//MATLAB's std is a bit different
+			/*
+			if (i + j <5)
+			{
+				printf("%f %f %f %f %f \n", stdev,stmp,stdev, skw, krt);
+			}
+			*/
+			if (stmp != 0){
+				skw = (skw / 256.0f) / ((stmp)*(stmp)*(stmp));
+				krt = (krt / 256.0f) / ((stmp)*(stmp)*(stmp)*(stmp));			
 			}
 			else{
-				skw1 = 0;
-				krt1 = 0;
+				skw = 0;
+				krt = 0;
 			}
-
+			/*
+			if (i + j <5)
+			{
+				printf("%f %f \n", skw, krt);
+			}*/
 			//---------------------------------------------------------------------------
 			// This is the nearest neighbor interpolation - ACTUALLY NOT NEEDED!!!!!!!!
 			// To remove the nested for loop here we need to modifie the algorithm to 
@@ -424,13 +383,24 @@ __global__ void A5_lo_stats(float* xVal1, float* outStd1, float* outSkw1, float*
 			// The modified output would be PxP (as described mathematically in the paper).
 			//---------------------------------------------------------------------------
 			// Only this final output should be written to global memory:
+
 			for (iB = i; iB < i + 4; iB++)
 			{
 				for (jB = j; jB < j + 4; jB++)
 				{
-					outStd1[(iB * 512) + jB] = stdev1;
-					outSkw1[(iB * 512) + jB] = skw1;
-					outKrt1[(iB * 512) + jB] = krt1;
+					// ADDED IF-ELSE STATEMENT HERE:
+					if (i > 500 || j > 500)
+					{ 
+						outStd[(iB * 512) + jB] = 0;
+						outSkw[(iB * 512) + jB] = 0;
+						outKrt[(iB * 512) + jB] = 0;
+					}
+					else
+					{
+						outStd[(iB * 512) + jB] = stdev;
+						outSkw[(iB * 512) + jB] = skw;
+						outKrt[(iB * 512) + jB] = krt;
+					}					 
 				}
 			}
 
@@ -504,7 +474,6 @@ __global__ void LMSE_map_kernel(float* reflut, float* D)
 		}
 	}
 }
-//=============================================================================
 //=============================================================================
 __global__ void fast_hi_stats_kernel1(float* absRefs, float* absDsts, float* outStd, float* outStdMod, float* outMean, float* ref_img, float* dst_img, float* TMP)
 {
@@ -599,7 +568,7 @@ __global__ void fast_hi_stats_kernel1(float* absRefs, float* absDsts, float* out
 		}
 	}
 }
-
+//=============================================================================
 __global__ void fast_hi_stats_kernel2(float* absRefs, float* absDsts, float* outStd, float* outStdMod, float* outMean, float* ref_img, float* dst_img, float* TMP)
 {
 	//Declarations
@@ -648,265 +617,13 @@ __global__ void product_array_kernel(float* out, float* in1, float* in2)
 	}
 }
 //=============================================================================
-void kernel_wrapper(const cv::Mat &mat_ref, const cv::Mat &mat_dst)
-{
-	int  GPU_N, device_num_used;
-	cudaGetDeviceCount(&GPU_N);
-
-	//OSU Workstation : 0 = Tesla, 1 = Titan1, 2 = Titan2
-	//ASU Workstation: 0 = Tesla, 1 = Quadro (don't use)
-	device_num_used = 1;
-	cudaError_t cudaStatus = cudaSetDevice(device_num_used);	// OSU Workstation: 0=Tesla, 1=Titan1, 2=Titan2
-	if (cudaStatus != cudaSuccess)
-		fprintf(stderr, "cudaSetDevice failed!");
-
-	// Allocate Page-locked (Pinned) HOST-memory
-	float* h_img_ref_float;				cudaMallocHost(&h_img_ref_float, REAL_SIZE);
-	float* h_img_dst_float;				cudaMallocHost(&h_img_dst_float, REAL_SIZE);
-	cufftComplex* h_ref_cufft;		cudaMallocHost(&h_ref_cufft, COMPLEX_SIZE);
-	cufftComplex* h_dst_cufft;		cudaMallocHost(&h_dst_cufft, COMPLEX_SIZE);
-	float* h_eta;									cudaMallocHost(&h_eta, REAL_SIZE);
-	float* h_product;							cudaMallocHost(&h_product, REAL_SIZE);
-
-
-	// Allocate DEVICE memory -- Appearance (Hi-Index)
-	float* d_img_ref_float;		cudaMalloc((void **)&d_img_ref_float, REAL_SIZE);
-	float* d_img_dst_float;		cudaMalloc((void **)&d_img_dst_float, REAL_SIZE);
-	float* d_L_hat_ref;				cudaMalloc((void **)&d_L_hat_ref, REAL_SIZE);
-	float* d_L_hat_dst;				cudaMalloc((void **)&d_L_hat_dst, REAL_SIZE);
-	cufftComplex* d_L_hat_ref_complex;  cudaMalloc((void **)&d_L_hat_ref_complex, COMPLEX_SIZE);
-	cufftComplex* d_L_hat_dst_complex;  cudaMalloc((void **)&d_L_hat_dst_complex, COMPLEX_SIZE);
-	float* d_CSF;							cudaMalloc((void **)&d_CSF, REAL_SIZE);
-	float* d_xPlane;				cudaMalloc((void **)&d_xPlane, 512 * sizeof(float));
-	float* d_yPlane;				cudaMalloc((void **)&d_yPlane, 512 * sizeof(float));
-	float* d_I_prime_org;	cudaMalloc((void **)&d_I_prime_org, REAL_SIZE);
-	float* d_I_prime_dst;	cudaMalloc((void **)&d_I_prime_dst, REAL_SIZE);
-	float* d_I_prime_err;	cudaMalloc((void **)&d_I_prime_err, REAL_SIZE);
-	float* d_outStd;			cudaMalloc((void **)&d_outStd, REAL_SIZE);
-	float* d_outStdMod;		cudaMalloc((void **)&d_outStdMod, REAL_SIZE);
-	float* d_outMean;			cudaMalloc((void **)&d_outMean, REAL_SIZE);
-	float* d_reflut;			cudaMalloc((void **)&d_reflut, REAL_SIZE);
-	float* d_TEMP;				cudaMalloc((void **)&d_TEMP, REAL_SIZE);
-	float* d_zeta;				cudaMalloc((void **)&d_zeta, REAL_SIZE);
-	float* d_lmse;			cudaMalloc((void **)&d_lmse, REAL_SIZE);
-	float* d_product;			cudaMalloc((void **)&d_product, REAL_SIZE);
-
-	// Allocate DEVICE memory -- Appearance (Lo-Index)
-	cufftComplex* d_ref_cufft; cudaMalloc((void **)&d_ref_cufft, COMPLEX_SIZE);
-	cufftComplex* d_dst_cufft; cudaMalloc((void **)&d_dst_cufft, COMPLEX_SIZE);
-	float* d_logGabor;			cudaMalloc((void **)&d_logGabor, REAL_SIZE);
-	cufftComplex* d_ref_c;	cudaMalloc((void **)&d_ref_c, COMPLEX_SIZE);
-	cufftComplex* d_dst_c;	cudaMalloc((void **)&d_dst_c, COMPLEX_SIZE);
-	float* d_ref_c_mag;		cudaMalloc((void **)&d_ref_c_mag, REAL_SIZE);
-	float* d_dst_c_mag;		cudaMalloc((void **)&d_dst_c_mag, REAL_SIZE);
-	float* d_ref_Std;		cudaMalloc((void **)&d_ref_Std, REAL_SIZE);
-	float* d_ref_Skw;		cudaMalloc((void **)&d_ref_Skw, REAL_SIZE);
-	float* d_ref_Krt;		cudaMalloc((void **)&d_ref_Krt, REAL_SIZE);
-	float* d_dst_Std;		cudaMalloc((void **)&d_dst_Std, REAL_SIZE);
-	float* d_dst_Skw;		cudaMalloc((void **)&d_dst_Skw, REAL_SIZE);
-	float* d_dst_Krt;		cudaMalloc((void **)&d_dst_Krt, REAL_SIZE);
-	float* d_eta;				cudaMalloc((void **)&d_eta, REAL_SIZE);
-
-
-	// Creates stream and cuFFT plans and set them in different streams
-	const int NUM_STREAMS = 10;
-	cudaStream_t stream[NUM_STREAMS];
-	cufftHandle* fftPlan = (cufftHandle*)malloc(sizeof(cufftHandle)*NUM_STREAMS);
-	for (int i = 0; i < NUM_STREAMS; i++)
-	{
-		cudaStreamCreate(&stream[i]);
-		cufftPlan2d(&fftPlan[i], N, N, CUFFT_C2C);
-		cufftSetStream(fftPlan[i], stream[i]);
-	}
-
-
-	// Configuration Parameters - EXPERIMENT WITH THESE TO DETERMINE OPTIMAL VALUES!!!!!!!
-	//(Launch most kernels as 4-dimensional functions - with overall 512x512 threads in grid):
-	dim3 gridSize(32, 32, 1);
-	dim3 blockSize(16, 16, 1);
-	dim3 fftShift_grid_size(16, 8, 1);
-	dim3 fftShift_block_size(32, 32, 1);
-
-	// The lo-stats kernels only need to be launced as (512^2)/4 threads due to 
-	//	the 4 pixel sliding window (i.e. only 12 pixel overlap in neighboring 16x16 blocks)
-	dim3 loStats_Grid_size(8, 8);
-	dim3 loStats_Block_size(16, 16);
-
-	//----------------------------------------------------------------------------
-	// Program initialization complete - Begin main program body:
-	//----------------------------------------------------------------------------
-
-	std::cout << "Beginning Detection Stage" << std::endl;
-	// Start CPU Timing
-	int itteration_num = 1;
-	double timing_sum = 0.0;
-	LARGE_INTEGER start_CPU, end_CPU, frequency_CPU;
-	float milliseconds_CPU;
-	QueryPerformanceFrequency(&frequency_CPU);
-	QueryPerformanceCounter(&start_CPU);
-
-	for (int timing_idx = 0; timing_idx < itteration_num; ++timing_idx)
-	{
-		// Begin NVTX Marker:
-		nvtxRangePushA("CUDA-MAD");
-
-		// Build CSF on Device
-		yPlane_CSF_kernel << < 1, 1, 0, stream[1] >> >(d_yPlane);
-		xPlane_CSF_kernel << < 1, 1, 0, stream[1] >> >(d_xPlane);
-		build_CSF_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_CSF, d_yPlane, d_xPlane);
-		A2_fftShift_kernel << < fftShift_grid_size, fftShift_block_size, 0, stream[1] >> >(d_CSF);
-
-		// Linearize REAL image data and copy data from HOST -> DEVICE
-		nvtxRangePushA("Linearize ref");// Begin NVTX Marker for Linearize ref
-		linearize_and_cast_from_Mat_to_float(mat_ref, h_img_ref_float);
-		nvtxRangePop();		// End NVTX Marker for Linearize ref
-		
-		cudaMemcpyAsync(d_img_ref_float, h_img_ref_float, REAL_SIZE, cudaMemcpyDeviceToHost, stream[1]); //DEVICE -> HOST
-		//cudaMemcpy(d_img_ref_float, h_img_ref_float, REAL_SIZE, cudaMemcpyDeviceToHost); //DEVICE -> HOST
-		D1_map_to_luminance_domain_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_img_ref_float, d_L_hat_ref);
-		R2C_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref, d_L_hat_ref_complex);
-		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_ref_complex, (cufftComplex *)d_L_hat_ref_complex, CUFFT_FORWARD);
-		A3_D3_pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref_complex, d_CSF, d_L_hat_ref_complex);
-		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_ref_complex, (cufftComplex *)d_L_hat_ref_complex, CUFFT_INVERSE);
-		D4_real_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref_complex, d_I_prime_org);
-
-		nvtxRangePushA("Linearize dst");// Begin NVTX Marker for Linearize ref
-		linearize_and_cast_from_Mat_to_float(mat_dst, h_img_dst_float);
-		nvtxRangePop();		// End NVTX Marker for Linearize ref
-
-		cudaMemcpyAsync(d_img_dst_float, h_img_dst_float, REAL_SIZE, cudaMemcpyDeviceToHost, stream[1]); //DEVICE -> HOST
-		//cudaMemcpy(d_img_dst_float, h_img_dst_float, REAL_SIZE, cudaMemcpyDeviceToHost); //DEVICE -> HOST
-		D1_map_to_luminance_domain_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_img_dst_float, d_L_hat_dst);
-		R2C_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst, d_L_hat_dst_complex);
-		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_dst_complex, (cufftComplex *)d_L_hat_dst_complex, CUFFT_FORWARD);
-		A3_D3_pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst_complex, d_CSF, d_L_hat_dst_complex);
-		cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_dst_complex, (cufftComplex *)d_L_hat_dst_complex, CUFFT_INVERSE);
-		D4_real_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst_complex, d_I_prime_dst);
-
-
-		// Detection Statistics
-		square_of_difference_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_img_ref_float, d_img_dst_float, d_reflut);
-		LMSE_map_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_reflut, d_lmse);
-		D2_error_img_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_I_prime_org, d_I_prime_dst, d_I_prime_err);
-		fast_hi_stats_kernel1 << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_I_prime_err, d_I_prime_org, d_outStd, d_outStdMod, d_outMean, d_img_ref_float, d_img_dst_float, d_TEMP);
-		fast_hi_stats_kernel2 << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_I_prime_err, d_I_prime_org, d_outStd, d_outStdMod, d_outMean, d_img_ref_float, d_img_dst_float, d_TEMP);
-		zeta_map_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_outMean, d_outStd, d_outStdMod, d_zeta);
-		product_array_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_product, d_zeta, d_lmse); // Product inside summation in MAD eq. 7
-		//cudaMemcpyAsync(h_product, d_product, REAL_SIZE, cudaMemcpyDeviceToHost, stream[1]); //DEVICE -> HOST
-
-		//- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-
-		// Begin Gabor Filterbank:
-
-		//- - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - - - - - 
-
-		// Exectute "in-place" C2C 2D-DFT of REF (used in the LEFT side of the Gabor Filterbank)
-		R2C_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_img_ref_float, d_ref_cufft);
-		R2C_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_img_dst_float, d_dst_cufft);
-		cufftExecC2C(fftPlan[1], (cufftComplex *)d_ref_cufft, (cufftComplex *)d_ref_cufft, CUFFT_FORWARD);
-		cufftExecC2C(fftPlan[1], (cufftComplex *)d_dst_cufft, (cufftComplex *)d_dst_cufft, CUFFT_FORWARD);
-
-		float scale[5] = { 0.5, 0.75, 1, 5, 6 };
-		for (int o = 0; o < 4; o++)
-		{
-			for (int s = 0; s < 5; s++)
-			{
-				A1_build_gabor <<< fftShift_grid_size, fftShift_block_size, 0, stream[1] >>>(d_logGabor, o, s);
-
-				A3_D3_pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_ref_cufft, d_logGabor, d_ref_c);
-				A3_D3_pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_dst_cufft, d_logGabor, d_dst_c);
-
-				cufftExecC2C(fftPlan[1], (cufftComplex *)d_ref_c, (cufftComplex *)d_ref_c, CUFFT_INVERSE);
-				cufftExecC2C(fftPlan[1], (cufftComplex *)d_dst_c, (cufftComplex *)d_dst_c, CUFFT_INVERSE);
-
-				A4_mag_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_ref_c, d_ref_c_mag, d_dst_c, d_dst_c_mag);
-
-				A5_lo_stats << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_ref_c_mag, d_ref_Std, d_ref_Skw, d_ref_Krt);
-				A5_lo_stats << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_dst_c_mag, d_dst_Std, d_dst_Skw, d_dst_Krt);
-
-				A6_delta_stats_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_ref_Std, d_ref_Skw, d_ref_Krt,
-					d_dst_Std, d_dst_Skw, d_dst_Krt, scale[s] / 13.25f, d_eta);
-			}
-		}
-		// Copy final eta map back to HOST for collapse (NEEDS TO BE DONE VIA REDUCTION)!
-		//cudaMemcpyAsync(h_eta, d_eta, REAL_SIZE, cudaMemcpyDeviceToHost, stream[1]); //DEVICE -> HOST
-
-
-		// Host Code waits here on memcpy
-		cudaMemcpy(h_product, d_product, REAL_SIZE, cudaMemcpyDeviceToHost); //DEVICE -> HOST
-
-		// Collapse the visibility-weighted local MSE via L2-norm (MAD eq. 7)
-		nvtxRangePushA("CPU Detection Map Collapse");
-		float d_detect = reduce_sum_of_squares_2D_CPU(h_product, BLOCK_SIZE, N - BLOCK_SIZE - 1);
-		d_detect = sqrt(d_detect) / sqrt(229441.0f);   // Number of itterations in loop: counter = 229441
-		d_detect = d_detect * 200;
-		nvtxRangePop();
-
-		cudaMemcpy(h_eta, d_eta, REAL_SIZE, cudaMemcpyDeviceToHost); //DEVICE -> HOST
-		nvtxRangePushA("CPU Appearance Map Collapse");
-		float d_appear = reduce_sum_of_squares_2D_CPU(h_eta, BLOCK_SIZE, N - BLOCK_SIZE);
-		d_appear = sqrt(d_appear) / 479.0f;
-		nvtxRangePop();
-
-		float beta1 = 0.467;
-		float beta2 = 0.130;
-		float alpha = 1 / (1 + beta1*pow(d_detect, beta2));
-		float MAD = pow(d_detect, alpha)*pow(d_appear, 1 - alpha);
-
-		// End NVTX Marker for CUDA-MAD:
-		nvtxRangePop();
-
-		// End CPU Timing
-		QueryPerformanceCounter(&end_CPU);
-		milliseconds_CPU = (end_CPU.QuadPart - start_CPU.QuadPart) *
-			1000.0 / frequency_CPU.QuadPart;
-		timing_sum += milliseconds_CPU;
-
-		std::cout << "Hi-Index d_detect = " << d_detect << std::endl;
-		std::cout << "Lo-Index d_appear = " << d_appear << std::endl;
-		std::cout << "\nMAD = " << MAD << std::endl;
-	} // End timing loop
-
-
-	fprintf(stderr, "\nTime  = %.3f ms\n", timing_sum / double(itteration_num));
-	//getchar();
-
-	//----------------------------------------------------------------------------
-	// Main program body complete - Perform closing operations:
-	//----------------------------------------------------------------------------
-
-	//Error:
-	// De-allocate memory here...
-
-	// cudaDeviceReset must be called before exiting in order for profiling and
-	// tracing tools such as Nsight and Visual Profiler to show complete traces.
-	cudaDeviceReset();
-
-	//return cudaStatus;
-}
-//=============================================================================
-void linearize_and_cast_from_Mat_to_float(const cv::Mat& mat_in, float* h_float)
-{
-	for (int row = 0; row < 512; row++)
-	for (int col = 0; col < 512; col++)
-		h_float[row * 512 + col] = static_cast<float>(mat_in.at<unsigned char>(row, col));
-}
-//=============================================================================
-void product_array_CPU(float* out, float* in1, float* in2)
-{
-	for (int i = BLOCK_SIZE; i < N - BLOCK_SIZE - 1; i++)
-	{
-		for (int j = BLOCK_SIZE; j < N - BLOCK_SIZE - 1; j++)
-			out[i*N + j] = in1[i*N + j] * in2[i*N + j];
-	}
-}
-//=============================================================================
-float reduce_sum_of_squares_2D_CPU(float* in, const int INSIDE_BOUND, const int OUTSIDE_BOUND)
+__inline float reduce_sum_of_squares_2D_CPU(float in[], const int INSIDE_BOUND, const int OUTSIDE_BOUND)
 {
 	float sum = 0.0f;
-	for (int i = INSIDE_BOUND; i < OUTSIDE_BOUND; i++)
+	int i = 0, j = 0;
+	for ( i = INSIDE_BOUND; i < OUTSIDE_BOUND; i++)
 	{
-		for (int j = INSIDE_BOUND; j < OUTSIDE_BOUND; j++)
+		for ( j = INSIDE_BOUND; j < OUTSIDE_BOUND; j++)
 			sum += in[i*N + j] * in[i*N + j];
 	}
 	return sum;
@@ -925,4 +642,430 @@ void write_to_file_DEBUG(float* w, const int SIZE)
 	}
 	outFile.close();
 }
+
 //=============================================================================
+
+// CPU Function
+void colorFunction_CPU(const cv::Mat &h_in, cv::Mat &h_out, const int num_rows, const int num_cols)
+{
+	// Copy contents from input image into output image for processing
+	//h_out = h_in.clone();
+
+	// [B1 G1 R1 B2 G2 R2 ... BN GN RN] => Memory Stride of 3
+	for (int r = 0; r < num_rows; ++r)
+	{
+		for (int c = 0; c < 3 * num_cols; c += 3)
+		{
+			//h_out.at<unsigned char>(r, c + 0) = 0; // Blue Channel is unchanged
+			//h_out.at<unsigned char>(r, c + 1) = 0; // Green Channel is unchanged
+			//h_out.at<unsigned char>(r, c + 2) = 0; // Turn off Red Channel
+			float b_processed = h_in.at<unsigned char>(r, c + 0)*0.11f;
+			float g_processed =	h_in.at<unsigned char>(r, c + 1)*0.59f;
+			float r_processed = h_in.at<unsigned char>(r, c + 2)*0.3f;
+			h_out.at<unsigned char>(r, c/3) = 
+				static_cast<unsigned char>(b_processed + g_processed + r_processed);
+		}
+	}
+}
+//-------------------------------------------------------------------
+//-------------------------------------------------------------------
+
+// Kernel Wrapper
+struct out_data kernel_wrapper(const cv::Mat& mat_ref, const cv::Mat& mat_dst)
+{
+	float h_img_ref_float[IMG_SIZE];
+	linearize_and_cast_from_Mat_to_float(mat_ref, h_img_ref_float);
+
+	float h_img_dst_float[IMG_SIZE];
+	linearize_and_cast_from_Mat_to_float(mat_dst, h_img_dst_float);
+
+	// Allocate Page-locked (Pinned) HOST-memory
+	//float h_I_prime_org[REAL_SIZE];
+	//float h_I_prime_err[REAL_SIZE];
+	//cufftComplex h_ref_cufft[COMPLEX_SIZE];
+
+	//cufftComplex h_dst_cufft[COMPLEX_SIZE];
+
+	//float h_reflut[REAL_SIZE];
+	//float h_lmse[REAL_SIZE];
+	//float h_zeta[REAL_SIZE];
+	float *h_eta = (float*)malloc(REAL_SIZE);
+	float *h_product = (float*)malloc(REAL_SIZE);
+
+		// Allocate DEVICE memory -- Appearance (Hi-Index)
+		float* d_img_ref_float;
+	gpuErrchk(cudaMalloc((void **)&d_img_ref_float, REAL_SIZE))
+
+		float* d_img_dst_float;
+	gpuErrchk(cudaMalloc((void **)&d_img_dst_float, REAL_SIZE))
+
+		float* d_L_hat_ref;
+	gpuErrchk(cudaMalloc((void **)&d_L_hat_ref, REAL_SIZE))
+
+		float* d_L_hat_dst;
+	gpuErrchk(cudaMalloc((void **)&d_L_hat_dst, REAL_SIZE))
+
+		cufftComplex* d_L_hat_ref_complex;
+	gpuErrchk(cudaMalloc((void **)&d_L_hat_ref_complex, COMPLEX_SIZE))
+
+		cufftComplex* d_L_hat_dst_complex;
+	gpuErrchk(cudaMalloc((void **)&d_L_hat_dst_complex, COMPLEX_SIZE))
+
+		float* d_CSF;
+	gpuErrchk(cudaMalloc((void **)&d_CSF, REAL_SIZE))
+
+		float* d_xPlane;
+	gpuErrchk(cudaMalloc((void **)&d_xPlane, 512 * sizeof(float)))
+		float* d_yPlane;
+	gpuErrchk(cudaMalloc((void **)&d_yPlane, 512 * sizeof(float)))
+
+		float* d_I_prime_org;
+	gpuErrchk(cudaMalloc((void **)&d_I_prime_org, REAL_SIZE))
+		float* d_I_prime_dst;
+	gpuErrchk(cudaMalloc((void **)&d_I_prime_dst, REAL_SIZE))
+
+		float* d_I_prime_err;
+	gpuErrchk(cudaMalloc((void **)&d_I_prime_err, REAL_SIZE))
+		float* d_outStd;
+	gpuErrchk(cudaMalloc((void **)&d_outStd, REAL_SIZE))
+
+		float* d_outStdMod;
+	gpuErrchk(cudaMalloc((void **)&d_outStdMod, REAL_SIZE))
+		float* d_outMean;
+	gpuErrchk(cudaMalloc((void **)&d_outMean, REAL_SIZE))
+		float* d_reflut;
+	gpuErrchk(cudaMalloc((void **)&d_reflut, REAL_SIZE))
+		float* d_TEMP;
+	gpuErrchk(cudaMalloc((void **)&d_TEMP, REAL_SIZE))
+		float* d_zeta;
+	gpuErrchk(cudaMalloc((void **)&d_zeta, REAL_SIZE))
+		float* d_lmse;
+	gpuErrchk(cudaMalloc((void **)&d_lmse, REAL_SIZE))
+
+		float* d_product;
+	gpuErrchk(cudaMalloc((void **)&d_product, REAL_SIZE))
+
+		// Allocate DEVICE memory -- Appearance (Lo-Index)
+		cufftComplex* d_ref_cufft;
+	gpuErrchk(cudaMalloc((void **)&d_ref_cufft, COMPLEX_SIZE))
+		cufftComplex* d_dst_cufft;
+	gpuErrchk(cudaMalloc((void **)&d_dst_cufft, COMPLEX_SIZE))
+		float* d_logGabor;
+	gpuErrchk(cudaMalloc((void **)&d_logGabor, REAL_SIZE))
+		cufftComplex* d_ref_c;
+	gpuErrchk(cudaMalloc((void **)&d_ref_c, COMPLEX_SIZE))
+		cufftComplex* d_dst_c;
+		float dummy_array[IMG_SIZE] = { 0 };
+	gpuErrchk(cudaMalloc((void **)&d_dst_c, COMPLEX_SIZE))
+	cudaMemcpy(d_dst_c, dummy_array, REAL_SIZE, cudaMemcpyHostToDevice);
+		float* d_ref_c_mag;
+	gpuErrchk(cudaMalloc((void **)&d_ref_c_mag, REAL_SIZE))
+	cudaMemcpy(d_ref_c_mag, dummy_array, REAL_SIZE, cudaMemcpyHostToDevice);
+		float* d_dst_c_mag;
+	gpuErrchk(cudaMalloc((void **)&d_dst_c_mag, REAL_SIZE))
+	cudaMemcpy(d_dst_c_mag, dummy_array, REAL_SIZE, cudaMemcpyHostToDevice);
+		float* d_ref_Std;
+	gpuErrchk(cudaMalloc((void **)&d_ref_Std, REAL_SIZE))		
+	cudaMemcpy(d_ref_Std, dummy_array, REAL_SIZE, cudaMemcpyHostToDevice);
+		float* d_ref_Skw;
+	gpuErrchk(cudaMalloc((void **)&d_ref_Skw, REAL_SIZE))
+	cudaMemcpy(d_ref_Skw, dummy_array, REAL_SIZE, cudaMemcpyHostToDevice);
+		float* d_ref_Krt;
+	gpuErrchk(cudaMalloc((void **)&d_ref_Krt, REAL_SIZE))
+	cudaMemcpy(d_ref_Krt, dummy_array, REAL_SIZE, cudaMemcpyHostToDevice);
+		float* d_dst_Std;
+	gpuErrchk(cudaMalloc((void **)&d_dst_Std, REAL_SIZE))
+	cudaMemcpy(d_dst_Std, dummy_array, REAL_SIZE, cudaMemcpyHostToDevice);
+		float* d_dst_Skw;
+	gpuErrchk(cudaMalloc((void **)&d_dst_Skw, REAL_SIZE))
+	cudaMemcpy(d_dst_Skw, dummy_array, REAL_SIZE, cudaMemcpyHostToDevice);
+		float* d_dst_Krt;
+	gpuErrchk(cudaMalloc((void **)&d_dst_Krt, REAL_SIZE))
+	cudaMemcpy(d_dst_Krt, dummy_array, REAL_SIZE, cudaMemcpyHostToDevice);
+		float* d_eta;
+	gpuErrchk(cudaMalloc((void **)&d_eta, REAL_SIZE))
+	cudaMemcpy(d_eta, dummy_array, REAL_SIZE, cudaMemcpyHostToDevice);
+	
+	// Creates stream and cuFFT plans and set them in different streams
+	const int NUM_STREAMS = 10;
+	cudaStream_t stream[NUM_STREAMS];
+	cufftHandle* fftPlan = NULL;
+	fftPlan = (cufftHandle*)malloc(sizeof(cufftHandle)*NUM_STREAMS);
+	if (NULL == fftPlan)
+	{
+		printf("Error malloc\n");
+	}
+	//for (int i = 0; i < NUM_STREAMS; i++)
+	//{
+		gpuErrchk(cudaStreamCreate(&stream[1]))
+		cufftPlan2d(&fftPlan[1], N, N, CUFFT_C2C);
+		cufftSetStream(fftPlan[1], stream[1]);
+	//}
+	// Configuration Parameters - EXPERIMENT WITH THESE TO DETERMINE OPTIMAL VALUES!!!!!!!
+	//(Launch most kernels as 4-dimensional functions - with overall 512x512 threads in grid):
+	dim3 gridSize(32, 32, 1);
+	dim3 blockSize(16, 16, 1);
+	dim3 fftShift_grid_size(16, 8, 1);
+	dim3 fftShift_block_size(32, 32, 1);
+
+	// The lo-stats kernels only need to be launced as (512^2)/4 threads due to 
+	//	the 4 pixel sliding window (i.e. only 12 pixel overlap in neighboring 16x16 blocks)
+	
+	// I'm only barely covering 125^2
+	dim3 loStats_Grid_size(8, 8);
+	dim3 loStats_Block_size(16, 16);
+	
+	gpuErrchk(cudaMemcpy(d_img_ref_float, h_img_ref_float, REAL_SIZE, cudaMemcpyHostToDevice)) // HOST -> DEVICE
+	gpuErrchk(cudaMemcpy(d_img_dst_float, h_img_dst_float, REAL_SIZE, cudaMemcpyHostToDevice)) // HOST -> DEVICE
+
+		// Map to luminance domain
+	map_to_luminance_domain_kernel1 << < gridSize, blockSize, 0, stream[1] >> >(d_img_ref_float, d_L_hat_ref);
+	cudaCheckError()
+	map_to_luminance_domain_kernel1 << < gridSize, blockSize, 0, stream[1] >> >(d_img_dst_float, d_L_hat_dst);
+	cudaCheckError()
+
+	// CAN MOVE THIS ANYWHERE!!!!!
+	// Launch Kernel to take the square of the differnce of the original image 
+	square_of_difference_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_img_ref_float, d_img_dst_float, d_reflut);
+	cudaCheckError()
+	// Filter L_hat_dst
+	R2C_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref, d_L_hat_ref_complex);
+	cudaCheckError()
+	R2C_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst, d_L_hat_dst_complex);
+	cudaCheckError()
+
+	// Build CSF on Device
+	yPlane_CSF_kernel << < 1, 1, 0, stream[1] >> >(d_yPlane);
+	cudaCheckError()
+	xPlane_CSF_kernel << < 1, 1, 0, stream[1] >> >(d_xPlane);
+	cudaCheckError()
+	build_CSF_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_CSF, d_yPlane, d_xPlane);
+	cudaCheckError()
+	fftShift_kernel << < fftShift_grid_size, fftShift_block_size, 0, stream[1] >> >(d_CSF);
+	cudaCheckError()
+	// Exectute "in-place" Forward C2C 2D-FFT
+	cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_ref_complex, (cufftComplex *)d_L_hat_ref_complex, CUFFT_FORWARD);
+	cudaCheckError()
+	cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_dst_complex, (cufftComplex *)d_L_hat_dst_complex, CUFFT_FORWARD);
+	cudaCheckError()
+	// Filter images
+	pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref_complex, d_CSF, d_L_hat_ref_complex);
+	cudaCheckError()
+	pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst_complex, d_CSF, d_L_hat_dst_complex);
+	cudaCheckError()
+	// LMSE - CAN MOVE ALMOST ANYWHERE
+	LMSE_map_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_reflut, d_lmse);
+	cudaCheckError()
+#ifdef DEBUG_MODE
+		float h_reflut1[IMG_SIZE];
+	gpuErrchk(cudaMemcpy(h_reflut1, d_reflut, REAL_SIZE, cudaMemcpyDeviceToHost))
+		float h_lmse11[IMG_SIZE];
+	gpuErrchk(cudaMemcpy(h_lmse11, d_lmse, REAL_SIZE, cudaMemcpyDeviceToHost))//Issue with LMSE_map_kernel
+#endif
+	// Exectute "In-Place" C2C 2D-FFT^-1 (i.e. inverse)
+	cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_ref_complex, (cufftComplex *)d_L_hat_ref_complex, CUFFT_INVERSE);
+	cudaCheckError()
+	cufftExecC2C(fftPlan[1], (cufftComplex *)d_L_hat_dst_complex, (cufftComplex *)d_L_hat_dst_complex, CUFFT_INVERSE);
+	cudaCheckError()
+	// Take Real Part
+	real_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_L_hat_ref_complex, d_I_prime_org);
+	cudaCheckError()
+	real_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_L_hat_dst_complex, d_I_prime_dst);
+	cudaCheckError()
+	// Compute error image:
+	error_img_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_I_prime_org, d_I_prime_dst, d_I_prime_err);
+	cudaCheckError()
+	//cudaDeviceSynchronize();
+	fast_hi_stats_kernel1 << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_I_prime_err, d_I_prime_org, d_outStd, d_outStdMod, d_outMean, d_img_ref_float, d_img_dst_float, d_TEMP);
+	cudaCheckError()
+	fast_hi_stats_kernel2 << <loStats_Grid_size, loStats_Block_size, 0, stream[1] >> >(d_I_prime_err, d_I_prime_org, d_outStd, d_outStdMod, d_outMean, d_img_ref_float, d_img_dst_float, d_TEMP);
+	cudaCheckError()
+	zeta_map_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_outMean, d_outStd, d_outStdMod, d_zeta);
+	cudaCheckError()
+	// Product inside summation in MAD eq. 7
+	product_array_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_product, d_zeta, d_lmse);
+#ifdef DEBUG_MODE
+	gpuErrchk(cudaMemcpy(h_product, d_product, REAL_SIZE, cudaMemcpyDeviceToHost)) //DEVICE -> HOST  : TEST
+	float h_zeta1[IMG_SIZE];
+	gpuErrchk(cudaMemcpy(h_zeta1, d_zeta, REAL_SIZE, cudaMemcpyDeviceToHost))
+	float h_lmse1[IMG_SIZE];
+	gpuErrchk(cudaMemcpy(h_lmse1, d_lmse, REAL_SIZE, cudaMemcpyDeviceToHost))//Issue with lmse: Tracking back
+#endif
+	cudaCheckError()
+	// Exectute "in-place" C2C 2D-DFT of REF (used in the LEFT side of the Gabor Filterbank)
+	R2C_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_img_ref_float, d_ref_cufft);
+	cudaCheckError()										//in			out
+	R2C_kernel << <gridSize, blockSize, 0, stream[1] >> >(d_img_dst_float, d_dst_cufft);
+	cudaCheckError()
+
+	// Forward FFT
+	cufftExecC2C(fftPlan[1], (cufftComplex *)d_ref_cufft, (cufftComplex *)d_ref_cufft, CUFFT_FORWARD);
+	cudaCheckError()
+	cufftExecC2C(fftPlan[1], (cufftComplex *)d_dst_cufft, (cufftComplex *)d_dst_cufft, CUFFT_FORWARD);
+	cudaCheckError()
+#ifdef DEBUG_MODE
+	cufftComplex h_ref_cufft_var[COMPLEX_SIZE];
+	cudaMemcpy(h_ref_cufft_var, d_ref_cufft, COMPLEX_SIZE, cudaMemcpyDeviceToHost);
+#endif
+	float scale[5] = { 0.5, 0.75, 1, 5, 6 };
+
+	for (int o = 0; o < 4; o++)
+	{
+		for (int s = 0; s < 5; s++)
+		{
+			buildGabor << < gridSize, blockSize, 0, stream[1] >> >(d_logGabor, o, s);
+#ifdef DEBUG_MODE
+			float gabor[IMG_SIZE];
+			cudaMemcpy(gabor, d_logGabor, REAL_SIZE, cudaMemcpyDeviceToHost);
+#endif
+			cudaCheckError()
+			fftShift_kernel << < fftShift_grid_size, fftShift_block_size, 0, stream[1] >> >(d_logGabor);
+#ifdef DEBUG_MODE
+			cudaMemcpy(gabor, d_logGabor, REAL_SIZE, cudaMemcpyDeviceToHost);
+#endif
+			cudaCheckError()
+
+			pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_ref_cufft, d_logGabor, d_ref_c);
+#ifdef DEBUG_MODE
+			cufftComplex h_ref_c1[COMPLEX_SIZE];
+			cudaMemcpy(h_ref_c1, d_ref_c, COMPLEX_SIZE, cudaMemcpyDeviceToHost);
+#endif
+			cudaCheckError()
+			pointWise_complex_matrix_mult_kernel_2d << < gridSize, blockSize, 0, stream[1] >> >(d_dst_cufft, d_logGabor, d_dst_c);
+#ifdef DEBUG_MODE
+			cufftComplex h_dst_c1[COMPLEX_SIZE];
+			cudaMemcpy(h_dst_c1, d_dst_c, COMPLEX_SIZE, cudaMemcpyDeviceToHost);
+#endif
+			cudaCheckError()
+
+			// Inverse FFT
+			cufftExecC2C(fftPlan[1], (cufftComplex *)d_ref_c, (cufftComplex *)d_ref_c, CUFFT_INVERSE);
+#ifdef DEBUG_MODE
+			cudaMemcpy(h_dst_c1, d_ref_c, COMPLEX_SIZE, cudaMemcpyDeviceToHost);
+#endif
+			cufftExecC2C(fftPlan[1], (cufftComplex *)d_dst_c, (cufftComplex *)d_dst_c, CUFFT_INVERSE);
+#ifdef DEBUG_MODE
+			cudaMemcpy(h_dst_c1, d_dst_c, COMPLEX_SIZE, cudaMemcpyDeviceToHost);
+#endif
+			cudaCheckError()
+
+			magnitude_kernel << < gridSize, blockSize, 0, stream[1] >> >(	d_ref_c, d_ref_c_mag);
+#ifdef DEBUG_MODE
+			float h_ref_c_mag[IMG_SIZE];
+			cudaMemcpy(h_ref_c_mag, d_ref_c_mag, REAL_SIZE, cudaMemcpyDeviceToHost);
+#endif
+			cudaCheckError()
+			magnitude_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_dst_c, d_dst_c_mag);
+#ifdef DEBUG_MODE
+			float h_dst_c_mag[IMG_SIZE];
+			cudaMemcpy(h_dst_c_mag, d_dst_c_mag, REAL_SIZE, cudaMemcpyDeviceToHost);
+#endif
+			cudaCheckError()
+				//write_to_file_DEBUG(h_dst_c_mag, N);
+			//write_to_file_DEBUG(h_ref_c_mag, N);
+			fast_lo_stats_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_ref_c_mag, d_ref_Std, d_ref_Skw, d_ref_Krt);
+#ifdef DEBUG_MODE
+			float h_ref_Std[IMG_SIZE], h_ref_Skw[IMG_SIZE], h_ref_Krt[IMG_SIZE];
+			cudaMemcpy(h_ref_Std, d_ref_Std, REAL_SIZE, cudaMemcpyDeviceToHost);
+			cudaMemcpy(h_ref_Skw, d_ref_Skw, REAL_SIZE, cudaMemcpyDeviceToHost);
+			cudaMemcpy(h_ref_Krt, d_ref_Krt, REAL_SIZE, cudaMemcpyDeviceToHost);
+#endif
+			cudaCheckError()
+				fast_lo_stats_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_dst_c_mag, d_dst_Std, d_dst_Skw, d_dst_Krt);
+#ifdef DEBUG_MODE
+			cudaMemcpy(h_ref_Std, d_dst_Std, REAL_SIZE, cudaMemcpyDeviceToHost);
+			cudaMemcpy(h_ref_Skw, d_dst_Skw, REAL_SIZE, cudaMemcpyDeviceToHost);
+			cudaMemcpy(h_ref_Krt, d_dst_Krt, REAL_SIZE, cudaMemcpyDeviceToHost);
+#endif
+			cudaCheckError()
+			delta_stats_kernel << < gridSize, blockSize, 0, stream[1] >> >(d_ref_Std, d_ref_Skw, d_ref_Krt, d_dst_Std, d_dst_Skw, d_dst_Krt, scale[s] / 13.25f, d_eta);
+
+			// NOTE: This should only write back after all 20 loop itterations:
+#ifdef DEBUG_MODE
+			float h_eta[IMG_SIZE];
+			cudaMemcpy(h_eta, d_eta, REAL_SIZE, cudaMemcpyDeviceToHost);
+#endif
+			cudaCheckError()
+		}
+	}
+
+	//// DEBUG:
+	////printf("Loop number %d\n", o * 5 + s + 1);
+	//float* test_HOST_data = (float*)malloc(REAL_SIZE);
+	//cudaMemcpy(test_HOST_data, d_eta, REAL_SIZE, cudaMemcpyDeviceToHost); // HOST - >DEVICE
+	//write_to_file_DEBUG(test_HOST_data, N);
+	//printf("DEBUG DONE\n\n");
+	//getchar();
+
+	// Collapse the visibility-weighted local MSE via L2-norm (MAD eq. 7)
+	gpuErrchk(cudaMemcpy(h_product, d_product, REAL_SIZE, cudaMemcpyDeviceToHost)) //DEVICE -> HOST
+	float d_detect = reduce_sum_of_squares_2D_CPU(h_product, BLOCK_SIZE, N - BLOCK_SIZE - 1);
+	d_detect = sqrt(d_detect) / sqrt(229441.0f);   //  Number of itterations in loop: counter = 229441
+	d_detect = d_detect * 200;
+
+	gpuErrchk(cudaMemcpy(h_eta, d_eta, REAL_SIZE, cudaMemcpyDeviceToHost)) //DEVICE -> HOST
+	float d_appear;
+	d_appear = reduce_sum_of_squares_2D_CPU(h_eta, BLOCK_SIZE, N - BLOCK_SIZE);
+	d_appear = sqrt(d_appear) / 479.0f;
+
+	float beta1 = 0.467;
+	float beta2 = 0.130;
+	float alpha = 1 / (1 + beta1*pow(d_detect, beta2));
+	float MAD = pow(d_detect, alpha)*pow(d_appear, 1 - alpha);
+	struct out_data d;
+	d.hi_index = d_detect;
+	d.lo_index = d_appear;
+	d.mad_value = MAD;
+	//std::cout << "Hi-Index d_detect = " << d_detect << std::endl;
+	//std::cout << "Lo-Index d_appear = " << d_appear << std::endl;
+	//std::cout << "\nMAD = " << MAD << std::endl;
+	//getchar();
+	free(h_eta);
+	free(h_product);
+	free(fftPlan);
+
+
+free_routine:
+	gpuErrchk(cudaFree(d_img_ref_float))
+	gpuErrchk(cudaFree(d_img_dst_float));
+	gpuErrchk(cudaFree(d_L_hat_ref));
+	gpuErrchk(cudaFree(d_L_hat_dst));
+	gpuErrchk(cudaFree(d_L_hat_ref_complex));
+	gpuErrchk(cudaFree(d_L_hat_dst_complex));
+
+	gpuErrchk(cudaFree(d_CSF));
+	gpuErrchk(cudaFree(d_xPlane));
+	gpuErrchk(cudaFree(d_yPlane));
+	gpuErrchk(cudaFree(d_I_prime_org));
+	gpuErrchk(cudaFree(d_I_prime_dst));
+	gpuErrchk(cudaFree(d_I_prime_err));
+	gpuErrchk(cudaFree(d_outStd));
+
+	gpuErrchk(cudaFree(d_outStdMod));
+	gpuErrchk(cudaFree(d_outMean));
+	gpuErrchk(cudaFree(d_reflut));
+	gpuErrchk(cudaFree(d_TEMP));
+	gpuErrchk(cudaFree(d_zeta));
+	gpuErrchk(cudaFree(d_lmse));
+
+	gpuErrchk(cudaFree(d_product));
+	gpuErrchk(cudaFree(d_ref_cufft));
+	gpuErrchk(cudaFree(d_dst_cufft));
+	gpuErrchk(cudaFree(d_logGabor));
+	gpuErrchk(cudaFree(d_ref_c));
+	gpuErrchk(cudaFree(d_dst_c));
+
+	gpuErrchk(cudaFree(d_ref_c_mag));
+	gpuErrchk(cudaFree(d_dst_c_mag));
+	gpuErrchk(cudaFree(d_ref_Std));
+	gpuErrchk(cudaFree(d_ref_Skw));
+	gpuErrchk(cudaFree(d_ref_Krt));
+
+	gpuErrchk(cudaFree(d_dst_Std));
+	gpuErrchk(cudaFree(d_dst_Skw));
+	gpuErrchk(cudaFree(d_dst_Krt));
+	gpuErrchk(cudaFree(d_eta));
+	// For Profiling (nvvp, NSIGHT, etc.)
+	return d;
+}
+//-----------------------------------------------------------------------------
