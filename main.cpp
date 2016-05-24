@@ -1,106 +1,169 @@
-//=============================================================================
+// main.cpp
+//-------------------------------------------------------------------
 #include "header.h"
-//=============================================================================
-int NUM_IMAGES = 1;
-int image_index = 0; //This variable indexes into the image_array
-image *image_array; //Array of images
-double timing_sum_global = 0;
-double timing_sum_combine_mad = 0;
-
-
-int do_main()
+//-------------------------------------------------------------------
+#define PROFILE
+void do_main()
 {
-	image_array = (image *) malloc (NUM_IMAGES * 2 * sizeof(image));
-	std::vector<std::string> reference_image_name =
-	{		"ref_1.png", "ref_2.png"	};
-	std::vector<std::string> distorted_image_name =
-	{
-		"child_swimming.AWGN.2.png", "child_swimming.AWGN.4.png", "child_swimming.JPEG.2.png", "child_swimming.JPEG.4.png",
-		"child_swimming.jpeg2000.2.png", "child_swimming.jpeg2000.4.png",	"child_swimming.contrast.2.png", "child_swimming.contrast.4.png",
-		"child_swimming.fnoise.2.png", "child_swimming.fnoise.4.png",		"child_swimming.BLUR.2.png", "child_swimming.BLUR.4.png", 
-		"swarm.BLUR.2.png", "swarm.BLUR.4.png", "swarm.AWGN.2.png", "swarm.AWGN.4.png", "swarm.JPEG.2.png", "swarm.JPEG.4.png", 
-		"swarm.contrast.2.png", "swarm.contrast.4.png", "swarm.fnoise.2.png", "swarm.fnoise.4.png",	"swarm.jpeg200.2.png", "swarm.jpeg200.4.png"
+	cudaSetDevice(DEVICE_NUM);
+	out_data d;
+#ifdef NPROFILE
+	char *ref_images[] = { //"./imgs/ref/horse.bmp",
+							"./imgs/ref/aerial_city.png",
+							"./imgs/ref/child_swimming.png",
+							"./imgs/ref/fisher.png",
+							"./imgs/ref/geckos.png",
+							"./imgs/ref/snow_leaves.png",
+							"./imgs/ref/sunsetcolor.png",
+							"./imgs/ref/swarm.png", };
+	char *dst_images[] = {  //"./imgs/dst/horse.JP2.bmp",
+							"./imgs/dst/aerial_city.AWGN.1.png",
+							"./imgs/dst/aerial_city.AWGN.5.png",
+							"./imgs/dst/aerial_city.BLUR.1.png",
+							"./imgs/dst/aerial_city.BLUR.5.png",
+							"./imgs/dst/aerial_city.jpeg2000.1.png",
+							"./imgs/dst/aerial_city.jpeg2000.5.png",
+
+							"./imgs/dst/child_swimming.AWGN.1.png",
+							"./imgs/dst/child_swimming.AWGN.5.png",
+							"./imgs/dst/child_swimming.BLUR.1.png",
+							"./imgs/dst/child_swimming.BLUR.5.png",
+							"./imgs/dst/child_swimming.jpeg2000.1.png",
+							"./imgs/dst/child_swimming.jpeg2000.5.png",
+
+							"./imgs/dst/fisher.AWGN.1.png",
+							"./imgs/dst/fisher.AWGN.5.png",
+							"./imgs/dst/fisher.BLUR.1.png",
+							"./imgs/dst/fisher.BLUR.5.png",
+							"./imgs/dst/fisher.jpeg2000.1.png",
+							"./imgs/dst/fisher.jpeg2000.5.png",
+
+							"./imgs/dst/geckos.AWGN.1.png",
+							"./imgs/dst/geckos.AWGN.5.png",
+							"./imgs/dst/geckos.BLUR.1.png",
+							"./imgs/dst/geckos.BLUR.5.png",
+							"./imgs/dst/geckos.jpeg2000.1.png",
+							"./imgs/dst/geckos.jpeg2000.5.png",
+
+							"./imgs/dst/snow_leaves.AWGN.1.png",
+							"./imgs/dst/snow_leaves.AWGN.5.png",
+							"./imgs/dst/snow_leaves.BLUR.1.png",
+							"./imgs/dst/snow_leaves.BLUR.5.png",
+							"./imgs/dst/snow_leaves.jpeg2000.1.png",
+							"./imgs/dst/snow_leaves.jpeg2000.5.png",
+
+							"./imgs/dst/sunsetcolor.AWGN.1.png",
+							"./imgs/dst/sunsetcolor.AWGN.5.png",
+							"./imgs/dst/sunsetcolor.BLUR.1.png",
+							"./imgs/dst/sunsetcolor.BLUR.5.png",
+							"./imgs/dst/sunsetcolor.jpeg2000.1.png",
+							"./imgs/dst/sunsetcolor.jpeg2000.5.png",
+
+							"./imgs/dst/swarm.AWGN.1.png",
+							"./imgs/dst/swarm.AWGN.5.png",
+							"./imgs/dst/swarm.BLUR.1.png",
+							"./imgs/dst/swarm.BLUR.5.png",
+							"./imgs/dst/swarm.jpeg2000.1.png",
+							"./imgs/dst/swarm.jpeg2000.5.png"
 	};
+#else
+	char *ref_images[] = { //"./imgs/ref/horse.bmp",
+		"aerial_city.png",
+		"child_swimming.png",
+		"fisher.png",
+		"geckos.png",
+		"snow_leaves.png",
+		"sunsetcolor.png",
+		"swarm.png", };
+	char *dst_images[] = {  //"./imgs/dst/horse.JP2.bmp",
+		"aerial_city.AWGN.1.png",
+		"aerial_city.AWGN.5.png",
+		"aerial_city.BLUR.1.png",
+		"aerial_city.BLUR.5.png",
+		"aerial_city.jpeg2000.1.png",
+		"aerial_city.jpeg2000.5.png",
 
+		"child_swimming.AWGN.1.png",
+		"child_swimming.AWGN.5.png",
+		"child_swimming.BLUR.1.png",
+		"child_swimming.BLUR.5.png",
+		"child_swimming.jpeg2000.1.png",
+		"child_swimming.jpeg2000.5.png",
 
-	double csf_filter_Gpu_aevrage = 0;
-	double appearence_statistic_Gpu_average = 0;
-	double detection_gabor_filterbank_GPU_average = 0;
-	double detection_statistic_GPU_average = 0;
+		"fisher.AWGN.1.png",
+		"fisher.AWGN.5.png",
+		"fisher.BLUR.1.png",
+		"fisher.BLUR.5.png",
+		"fisher.jpeg2000.1.png",
+		"fisher.jpeg2000.5.png",
+
+		"geckos.AWGN.1.png",
+		"geckos.AWGN.5.png",
+		"geckos.BLUR.1.png",
+		"geckos.BLUR.5.png",
+		"geckos.jpeg2000.1.png",
+		"geckos.jpeg2000.5.png",
+
+		"snow_leaves.AWGN.1.png",
+		"snow_leaves.AWGN.5.png",
+		"snow_leaves.BLUR.1.png",
+		"snow_leaves.BLUR.5.png",
+		"snow_leaves.jpeg2000.1.png",
+		"snow_leaves.jpeg2000.5.png",
+
+		"sunsetcolor.AWGN.1.png",
+		"sunsetcolor.AWGN.5.png",
+		"sunsetcolor.BLUR.1.png",
+		"sunsetcolor.BLUR.5.png",
+		"sunsetcolor.jpeg2000.1.png",
+		"sunsetcolor.jpeg2000.5.png",
+
+		"swarm.AWGN.1.png",
+		"swarm.AWGN.5.png",
+		"swarm.BLUR.1.png",
+		"swarm.BLUR.5.png",
+		"swarm.jpeg2000.1.png",
+		"swarm.jpeg2000.5.png"
+	};
+#endif
+	double index_array[NUMBER_OF_IMAGES] = { 0xff };
+	float mad_value = 0;
+	int i, j, k;
 	
-
-	////// Read in images
-	//for (int i = 0; i < 1; i++)
-	int i = 0;
+	for ( i = 0; i < sizeof(ref_images)/sizeof(char*); i++) //For every image in ref_images
 	{
-		//for (int j = 0; j < NUM_IMAGES; j++)
-		int j = 0;
+		cv::Mat mat_ref = cv::imread(ref_images[i], CV_8UC1);
+		for ( j = 0; j < 6; j++) //For every image in dst_images
 		{
-			// Read in images
-			cv::Mat mat_ref = cv::imread("horse.bmp", CV_8UC1); // CV_LOAD_IMAGE_UNCHANGED);
-			//cv::Mat mat_ref = cv::imread(reference_image_name[i], CV_8UC1); // CV_LOAD_IMAGE_UNCHANGED);
-			cv::Mat mat_dst = cv::imread("horse.JP2.bmp", CV_8UC1); // CV_LOAD_IMAGE_UNCHANGED);
-			//cv::Mat mat_dst = cv::imread(distorted_image_name[j], CV_8UC1); // CV_LOAD_IMAGE_UNCHANGED);
-
-			// Call function in .cu file
-			//cudaError_t cudaStatus = kernel_wrapper(mat_ref, mat_dst);
-			kernel_wrapper(mat_ref, mat_dst);
-			//image_index = image_index + 1;
-			//if (cudaStatus != cudaSuccess)
-			//{
-			//	fprintf(stderr, "kernel_wrapper function failed!");
-			//	return 1;
-			//}
-//			else
-//				//printf("Exit with zero errors...\n");
-//			{
-//				//printf("Execution number %d\n", image_index);
-//#ifdef CSF_FILTER
-//				csf_filter_Gpu_aevrage += image_array[image_index - 1].csf_filter_Gpu;
-//				//printf("image_array[%d].csf_filter_Gpu = %lf\n", image_index, image_array[image_index - 1].csf_filter_Gpu);
-//#endif
-//#ifdef LOW_STATS
-//				appearence_statistic_Gpu_average += image_array[image_index - 1].appearence_statistic_Gpu;
-//				//printf("image_array[%d].appearence_statistic_Gpu = %lf\n", image_index, image_array[image_index - 1].appearence_statistic_Gpu);
-//#endif
-//#ifdef LOG_GABOR
-//				detection_gabor_filterbank_GPU_average += image_array[image_index - 1].detection_gabor_filterbank_GPU;
-//				//printf("image_array[%d].detection_gabor_filterbank_GPU = %lf\n", image_index, image_array[image_index - 1].detection_gabor_filterbank_GPU);
-//#endif
-//#ifdef HI_STATS
-//				detection_statistic_GPU_average += image_array[image_index - 1].detection_statistic_GPU;
-//				//printf("image_array[%d].detection_statistic_GPU = %lf\n", image_index, image_array[image_index - 1].detection_statistic_GPU);
-//#endif
-//			}
-				
-		}
+			cv::Mat mat_dst = cv::imread(dst_images[i*6 + j], CV_8UC1); //6 because there are 6 distorted image for every ref image
+			mad_value = 0;
+			for ( k = 0; k < NUMBER_OF_ITERATIONS; k++)
+			{
+				// Call the wrapper function
+				d = kernel_wrapper(mat_ref, mat_dst);
+				mad_value += d.mad_value;
+			}
+			printf("%d %f %f\n", i, mad_value, mad_value / (float)NUMBER_OF_ITERATIONS);
+			index_array[i * 6 + j] = mad_value / (float)NUMBER_OF_ITERATIONS;
+			printf("The MAD index for %s and %s is: %f\n", ref_images[i], dst_images[i * 6 + j], d.mad_value);
+		}			
 	}
-	//printf("*****************Average values as below ************************\n");
-
-	//printf("timing_sum_global = %lf\n", timing_sum_global / (2 * NUM_IMAGES));
-	//printf("csf_filter_Gpu_aevrage = %lf\n",  csf_filter_Gpu_aevrage / (2 * NUM_IMAGES));
-	//printf("hi_statistic_Gpu_average = %lf\n", appearence_statistic_Gpu_average / (2 * NUM_IMAGES));
-	//printf("gabor_filterbank_GPU_average = %lf\n", detection_gabor_filterbank_GPU_average / (2 * NUM_IMAGES));
-	//printf("lo_statistic_GPU_average =   %lf\n", detection_statistic_GPU_average / (2 * NUM_IMAGES));
-	//printf("timing_sum_combine_mad = %lf\n", timing_sum_combine_mad / (2 * NUM_IMAGES));
-	return 0;
+	cudaDeviceReset();
 }
-//=============================================================================
+//---------------------------------------------------------------------
+
 int main(int argc, char* argv[])
 {
-	int failure_code = 0;
-	//try
-	//{
-		failure_code = do_main();
-	//}
-	//catch (std::exception const& err)
-	//{
-	//	std::printf("%s\n", err.what());
-	//	failure_code = 1;
-	//	getchar();
-	//}
+	try
+	{
+		do_main();
+	}
+	catch (std::exception const& err)
+	{
+		std::printf("%s\n", err.what());
+		getchar();
+	}
 
-	system("pause"); // Remove this for profiling
-	//return failure_code;
-	return 0; 
+	return 0;
 }
+//---------------------------------------------------------------------
